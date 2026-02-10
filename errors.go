@@ -1,0 +1,16 @@
+package tga
+
+import "errors"
+
+// Sentinel errors for decode/encode operations.
+// Use errors.Is to check for them in callers.
+var (
+	// ErrFormat is returned when the TGA file format is invalid.
+	ErrFormat = errors.New("tga: invalid format")
+	// ErrUnsupported is returned when the TGA file is unsupported.
+	ErrUnsupported = errors.New("tga: unsupported bit depth or image type")
+	// ErrRLEOverrun is returned when the RLE data overrun.
+	ErrRLEOverrun = errors.New("tga: rle data overrun")
+	// ErrHeaderTooShort is returned when the TGA header is too short.
+	ErrHeaderTooShort = errors.New("tga: header too short")
+)
