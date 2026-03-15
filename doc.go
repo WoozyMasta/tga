@@ -39,6 +39,24 @@ Encode with RLE compression:
 	defer out.Close()
 	err := tga.EncodeWithOptions(out, img, &tga.EncodeOptions{RLE: true})
 
+Encode true-color as 24-bit:
+
+	out24, _ := os.Create("out-24.tga")
+	defer out24.Close()
+	err := tga.EncodeWithOptions(out24, img, &tga.EncodeOptions{PixelDepth: 24})
+
+Encode true-color as 16-bit:
+
+	out16, _ := os.Create("out-16.tga")
+	defer out16.Close()
+	err := tga.EncodeWithOptions(out16, img, &tga.EncodeOptions{PixelDepth: 16})
+
+Encode paletted image with 32-bit color map:
+
+	outPal, _ := os.Create("out-pal.tga")
+	defer outPal.Close()
+	err := tga.EncodeWithOptions(outPal, palettedImg, &tga.EncodeOptions{ColorMapDepth: 32})
+
 With image.Decode (after import _ "github.com/woozymasta/tga/register" or tga.RegisterFormat()):
 
 	img, format, err := image.Decode(f)

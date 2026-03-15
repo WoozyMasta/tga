@@ -18,4 +18,13 @@ err := tga.Encode(w, img)
 
 // Encode with RLE compression
 err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{RLE: true})
+
+// Encode true-color as 24-bit
+err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{PixelDepth: 24})
+
+// Encode true-color as 16-bit
+err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{PixelDepth: 16})
+
+// Encode paletted image with 32-bit palette entries
+err := tga.EncodeWithOptions(w, palettedImg, &tga.EncodeOptions{ColorMapDepth: 32})
 ```

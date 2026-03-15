@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning][].
 ### Added
 
 * `EncodeWithOptions` and `EncodeOptions{RLE:true}` for RLE-compressed output.
+* TGA encode support for true-color `16-bit` and `24-bit` output.
+* TGA encode support for color-mapped (`paletted`) images.
+* `EncodeOptions.PixelDepth` and `EncodeOptions.ColorMapDepth`.
 
 ### Changed
 
