@@ -384,13 +384,20 @@ func TestEncodeGrayRoundTrip(t *testing.T) {
 	}
 }
 
-// testdataTGA is the list of TGA files for round-trip tests (run: go run ./testdata/gen or ./testdata).
+// testdataTGA is the list of TGA files for round-trip tests.
+// Regenerate with: go run ./testdata/gen
 var testdataTGA = []string{
 	"testdata/bw_32x32_8.tga",
 	"testdata/color_32x32_24.tga",
 	"testdata/color_32x32_32.tga",
 	"testdata/bw_4096x16_8.tga",
 	"testdata/color_4096x16_24.tga",
+	"testdata/sample_truecolor_16.tga",
+	"testdata/sample_truecolor_24.tga",
+	"testdata/sample_truecolor_rle24.tga",
+	"testdata/sample_paletted.tga",
+	"testdata/sample_paletted_rle.tga",
+	"testdata/sample_metadata.tga",
 }
 
 // imagesEqual reports whether two images have the same bounds and pixel values.
@@ -415,12 +422,12 @@ func imagesEqual(a, b image.Image) bool {
 
 // TestRoundTrip_Testdata decodes each testdata TGA, re-encodes it, decodes again, and compares.
 // Direction: file -> decode -> encode -> decode -> compare to first decode.
-// Run after generating testdata: go run ./testdata/gen or go run ./testdata
+// Run after generating testdata: go run ./testdata/gen
 func TestRoundTrip_Testdata(t *testing.T) {
 	for _, path := range testdataTGA {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			t.Skipf("testdata missing: %v (run: go run ./testdata)", err)
+			t.Skipf("testdata missing: %v (run: go run ./testdata/gen)", err)
 			return
 		}
 
@@ -455,7 +462,7 @@ func TestRoundTrip_Testdata_EncodeFirst(t *testing.T) {
 	// Use same list; we only need at least one file to exist to know testdata is there
 	first := filepath.Join(dir, "bw_32x32_8.tga")
 	if _, err := os.Stat(first); err != nil {
-		t.Skipf("testdata missing (run: go run ./testdata): %v", err)
+		t.Skipf("testdata missing (run: go run ./testdata/gen): %v", err)
 		return
 	}
 

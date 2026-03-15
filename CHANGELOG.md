@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning][].
 * Decoder now validates image type/bit-depth combinations before pixel decode.
 * Improved decode performance and reduced internal overhead, especially for
   large images and RLE-compressed files.
+* Expanded test and benchmark coverage for new format capabilities.
 
 ### Removed
 

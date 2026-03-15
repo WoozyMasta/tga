@@ -490,12 +490,21 @@ func writePalette(w io.Writer, pal color.Palette, depth int) error {
 
 		switch depth {
 		case 24:
-			if _, err := w.Write([]byte{b, g, r}); err != nil {
+			var entry [3]byte
+			entry[0] = b
+			entry[1] = g
+			entry[2] = r
+			if _, err := w.Write(entry[:]); err != nil {
 				return err
 			}
 
 		case 32:
-			if _, err := w.Write([]byte{b, g, r, a}); err != nil {
+			var entry [4]byte
+			entry[0] = b
+			entry[1] = g
+			entry[2] = r
+			entry[3] = a
+			if _, err := w.Write(entry[:]); err != nil {
 				return err
 			}
 
@@ -534,8 +543,9 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 				return err
 			}
 
-			header := []byte{packetHeader}
-			if _, err := w.Write(header); err != nil {
+			var header [1]byte
+			header[0] = packetHeader
+			if _, err := w.Write(header[:]); err != nil {
 				return err
 			}
 
@@ -567,8 +577,9 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 			return err
 		}
 
-		header := []byte{packetHeader}
-		if _, err := w.Write(header); err != nil {
+		var header [1]byte
+		header[0] = packetHeader
+		if _, err := w.Write(header[:]); err != nil {
 			return err
 		}
 
