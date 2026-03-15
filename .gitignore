@@ -189,4 +189,5 @@ $RECYCLE.BIN/
 
 !testdata/**/*.tga
 !testdata/**/*.bmp
-testdata/bench_*.txt
+bench_*.txt
+*.pprof
