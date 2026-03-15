@@ -1,6 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/tga
+
 package tga
 
 import (
+	"encoding/binary"
 	"image"
 	"image/draw"
 	"io"
@@ -37,15 +42,23 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		return ErrFormat
 	}
 
+	// Bounds check above guarantees safe conversion to uint16.
+	// #nosec G115 -- validated by range checks.
+	mw16 := uint16(mw)
+	// #nosec G115 -- validated by range checks.
+	mh16 := uint16(mh)
+
 	// 18-byte header: id=0, no color map, then image spec
 	header := [18]byte{
 		0, 0, 0, 0, 0, 0, 0, 0,
 		0, 0, 0, 0,
-		byte(mw), byte(mw >> 8),
-		byte(mh), byte(mh >> 8),
+		0, 0,
+		0, 0,
 		0,
 		0x20, // bit 5: top-left origin
 	}
+	binary.LittleEndian.PutUint16(header[12:14], mw16)
+	binary.LittleEndian.PutUint16(header[14:16], mh16)
 
 	settings := effectiveEncodeOptions(opts)
 
@@ -209,7 +222,12 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 		runLen := findRunLength(packed, bytesPerPixel, i, totalPixels)
 
 		if runLen > 1 {
-			header := []byte{0x80 | byte(runLen-1)}
+			packetHeader, err := makePacketHeader(runLen, true)
+			if err != nil {
+				return err
+			}
+
+			header := []byte{packetHeader}
 			if _, err := w.Write(header); err != nil {
 				return err
 			}
@@ -237,7 +255,12 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 			i++
 		}
 
-		header := []byte{byte(rawLen - 1)}
+		packetHeader, err := makePacketHeader(rawLen, false)
+		if err != nil {
+			return err
+		}
+
+		header := []byte{packetHeader}
 		if _, err := w.Write(header); err != nil {
 			return err
 		}
@@ -270,11 +293,27 @@ func pixelsEqualAt(packed []byte, bytesPerPixel int, i, j int) bool {
 	ii := i * bytesPerPixel
 	jj := j * bytesPerPixel
 
-	for k := 0; k < bytesPerPixel; k++ {
+	for k := range bytesPerPixel {
 		if packed[ii+k] != packed[jj+k] {
 			return false
 		}
 	}
 
 	return true
+}
+
+// makePacketHeader builds one TGA packet header byte for given pixel count.
+func makePacketHeader(count int, rle bool) (byte, error) {
+	if count < 1 || count > 128 {
+		return 0, ErrFormat
+	}
+
+	// count range check above guarantees safe conversion.
+	// #nosec G115 -- validated by range checks.
+	header := byte(count - 1)
+	if rle {
+		header |= 0x80
+	}
+
+	return header, nil
 }

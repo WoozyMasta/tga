@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/tga
+
 package tga
 
 import (
@@ -116,12 +120,12 @@ func Decode(r io.Reader) (image.Image, error) {
 
 		palSize := cMapStart + cMapLen
 		palette = make(color.Palette, palSize)
-		for i := 0; i < cMapStart; i++ {
+		for i := range cMapStart {
 			palette[i] = color.NRGBA{}
 		}
 
 		// Create the color palette
-		for i := 0; i < cMapLen; i++ {
+		for i := range cMapLen {
 			offset := i * entryBytes
 			idx := cMapStart + i
 			switch cMapDepth {
@@ -232,7 +236,7 @@ func decodeUncompressed(r io.Reader, w, h, depth int, flipY bool) (image.Image, 
 
 	rowBuf := make([]byte, rowSize)
 
-	for y := 0; y < h; y++ {
+	for y := range h {
 		destY := y
 		if flipY {
 			destY = h - 1 - y
@@ -264,7 +268,7 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipY bool, pal co
 	stride := img.Stride
 	rowBuf := make([]byte, w)
 
-	for y := 0; y < h; y++ {
+	for y := range h {
 		destY := y
 		if flipY {
 			destY = h - 1 - y
@@ -325,7 +329,7 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 
 			if isGray {
 				val := pixelBuf[0]
-				for i := 0; i < count; i++ {
+				for range count {
 					outPix[outIdx] = val
 					outIdx++
 				}
@@ -343,7 +347,7 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 					rv, gv, bv, av = c.R, c.G, c.B, c.A
 				}
 
-				for i := 0; i < count; i++ {
+				for range count {
 					outPix[outIdx+0] = rv
 					outPix[outIdx+1] = gv
 					outPix[outIdx+2] = bv
@@ -413,7 +417,7 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 			if err != nil {
 				return nil, err
 			}
-			for i := 0; i < count; i++ {
+			for range count {
 				outPix[outIdx] = val
 				outIdx++
 			}
@@ -441,7 +445,7 @@ func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
 
 	switch depth {
 	case 24:
-		for i := 0; i < w; i++ {
+		for range w {
 			b := src[si]
 			g := src[si+1]
 			r := src[si+2]
@@ -454,7 +458,7 @@ func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
 		}
 
 	case 32:
-		for i := 0; i < w; i++ {
+		for range w {
 			b := src[si]
 			g := src[si+1]
 			r := src[si+2]
@@ -468,7 +472,7 @@ func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
 		}
 
 	case 15, 16:
-		for i := 0; i < w; i++ {
+		for range w {
 			v := uint16(src[si]) | uint16(src[si+1])<<8
 			c := decodeRGB555(v)
 			dst[di+0] = c.R
@@ -529,7 +533,7 @@ func flipImageVertically(img image.Image, _, h int) {
 	halfH := h / 2
 
 	// Flip the image vertically
-	for y := 0; y < halfH; y++ {
+	for y := range halfH {
 		y1 := y * stride
 		y2 := (h - 1 - y) * stride
 

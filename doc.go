@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/tga
+
 /*
 Package tga implements decoding and encoding of TGA (Truevision TARGA) image files.
 
@@ -31,9 +35,9 @@ Encode example:
 
 Encode with RLE compression:
 
-	outRLE, _ := os.Create("out-rle.tga")
-	defer outRLE.Close()
-	err := tga.EncodeWithOptions(outRLE, img, &tga.EncodeOptions{RLE: true})
+	out, _ := os.Create("out-rle.tga")
+	defer out.Close()
+	err := tga.EncodeWithOptions(out, img, &tga.EncodeOptions{RLE: true})
 
 With image.Decode (after import _ "github.com/woozymasta/tga/register" or tga.RegisterFormat()):
 
