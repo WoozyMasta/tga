@@ -533,6 +533,7 @@ func encodeRGB555(r, g, b, a uint8) uint16 {
 func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 	totalPixels := len(packed) / bytesPerPixel
 	i := 0
+	header := []byte{0}
 
 	for i < totalPixels {
 		runLen := findRunLength(packed, bytesPerPixel, i, totalPixels)
@@ -543,9 +544,8 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 				return err
 			}
 
-			var header [1]byte
 			header[0] = packetHeader
-			if _, err := w.Write(header[:]); err != nil {
+			if _, err := w.Write(header); err != nil {
 				return err
 			}
 
@@ -577,9 +577,8 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 			return err
 		}
 
-		var header [1]byte
 		header[0] = packetHeader
-		if _, err := w.Write(header[:]); err != nil {
+		if _, err := w.Write(header); err != nil {
 			return err
 		}
 
