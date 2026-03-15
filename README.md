@@ -1,8 +1,13 @@
 # tga
 
-Go package for decoding and encoding TGA (Truevision TARGA) images.  
-Supports uncompressed and RLE types 1, 2, 3, 9, 10, 11;
-bit depths 8, 15, 16, 24, 32.
+Go package for decoding and encoding TGA (Truevision TARGA) images.
+
+* Decode: uncompressed and RLE image types `1`, `2`, `3`, `9`, `10`, `11`;
+  bit depths `8`, `15`, `16`, `24`, `32`.
+* Encode: grayscale, true-color (`16`/`24`/`32`), and paletted (`8`) output;
+  optional RLE compression.
+* TGA 2.0 write support: footer, extension/developer areas, and metadata fields.
+* Encode options: `PixelDepth`, `ColorMapDepth`, `OriginBottom`, `ImageID`.
 
 ```go
 import "github.com/woozymasta/tga"
@@ -34,6 +39,19 @@ err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{
     Author:    "WoozyMasta",
     Gamma:     2.2,
     Timestamp: time.Now(),
+  },
+})
+
+// Encode with bottom-left origin and Image ID field
+err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{
+  OriginBottom: true,
+  ImageID:      []byte("preview-id"),
+})
+
+// Set explicit TGA2 alpha-attribute semantics (advanced)
+err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{
+  Metadata: &tga.TGA2Metadata{
+    AttributesType: 3,
   },
 })
 ```

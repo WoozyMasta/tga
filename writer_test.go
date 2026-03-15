@@ -2,6 +2,7 @@ package tga
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"image"
 	"image/color"
@@ -192,6 +193,9 @@ func TestEncode_DefaultUncompressed(t *testing.T) {
 	if data[2] != typeTrueColor {
 		t.Fatalf("header image type = %d, want %d", data[2], typeTrueColor)
 	}
+	if data[17]&0x0f != 8 {
+		t.Fatalf("descriptor alpha bits=%d, want 8", data[17]&0x0f)
+	}
 }
 
 func TestEncodeWithOptions_TrueColor24(t *testing.T) {
@@ -214,6 +218,9 @@ func TestEncodeWithOptions_TrueColor24(t *testing.T) {
 	}
 	if data[16] != 24 {
 		t.Fatalf("pixel depth=%d, want 24", data[16])
+	}
+	if data[17]&0x0f != 0 {
+		t.Fatalf("descriptor alpha bits=%d, want 0", data[17]&0x0f)
 	}
 
 	dec, err := Decode(bytes.NewReader(data))
@@ -249,6 +256,9 @@ func TestEncodeWithOptions_TrueColor16(t *testing.T) {
 	}
 	if data[16] != 16 {
 		t.Fatalf("pixel depth=%d, want 16", data[16])
+	}
+	if data[17]&0x0f != 1 {
+		t.Fatalf("descriptor alpha bits=%d, want 1", data[17]&0x0f)
 	}
 
 	dec, err := Decode(bytes.NewReader(data))
@@ -398,5 +408,120 @@ func TestEncodeWithOptions_UnsupportedDepth(t *testing.T) {
 	}
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("expected ErrUnsupported, got %v", err)
+	}
+
+	err = EncodeWithOptions(bytes.NewBuffer(nil), img, &EncodeOptions{
+		Metadata: &TGA2Metadata{
+			AttributesType: 9,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid alpha attribute type")
+	}
+	if !errors.Is(err, ErrFormat) {
+		t.Fatalf("expected ErrFormat, got %v", err)
+	}
+}
+
+func TestEncodeWithOptions_ImageID(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	imageID := []byte("example-id")
+
+	var buf bytes.Buffer
+	err := EncodeWithOptions(&buf, img, &EncodeOptions{ImageID: imageID})
+	if err != nil {
+		t.Fatalf("EncodeWithOptions ImageID: %v", err)
+	}
+
+	data := buf.Bytes()
+	if len(data) < 18+len(imageID) {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+	if int(data[0]) != len(imageID) {
+		t.Fatalf("header id length=%d, want %d", data[0], len(imageID))
+	}
+	if !bytes.Equal(data[18:18+len(imageID)], imageID) {
+		t.Fatalf("image id bytes mismatch")
+	}
+
+	dec, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode with ImageID: %v", err)
+	}
+	if !imagesEqual(img, dec) {
+		t.Fatal("round-trip mismatch with image id")
+	}
+}
+
+func TestEncodeWithOptions_OriginBottom(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	img.SetNRGBA(0, 1, color.NRGBA{B: 255, A: 255})
+
+	var buf bytes.Buffer
+	err := EncodeWithOptions(&buf, img, &EncodeOptions{OriginBottom: true})
+	if err != nil {
+		t.Fatalf("EncodeWithOptions OriginBottom: %v", err)
+	}
+
+	data := buf.Bytes()
+	if len(data) < 18 {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+	if data[17]&maskOriginTop != 0 {
+		t.Fatalf("expected bottom-left origin bit clear, descriptor=0x%02x", data[17])
+	}
+
+	dec, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode with OriginBottom: %v", err)
+	}
+	if !imagesEqual(img, dec) {
+		t.Fatal("round-trip mismatch with bottom origin")
+	}
+}
+
+func TestEncodeWithOptions_MetadataAttributeType(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 1, G: 2, B: 3, A: 255})
+
+	var buf bytes.Buffer
+	err := EncodeWithOptions(&buf, img, &EncodeOptions{
+		Metadata: &TGA2Metadata{
+			AttributesType: 3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("EncodeWithOptions Metadata AttributesType: %v", err)
+	}
+
+	data := buf.Bytes()
+	if len(data) < tga2FooterSize {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+	footer := data[len(data)-tga2FooterSize:]
+	if string(footer[8:26]) != tga2FooterSignature {
+		t.Fatal("expected TGA 2.0 footer signature")
+	}
+
+	extOffset := int(binary.LittleEndian.Uint32(footer[0:4]))
+	if extOffset <= 0 || extOffset+tga2ExtensionSize > len(data) {
+		t.Fatal("invalid extension offset")
+	}
+	ext := data[extOffset : extOffset+tga2ExtensionSize]
+	if ext[tga2OffAttrType] != 3 {
+		t.Fatalf("extension attribute type=%d, want 3", ext[tga2OffAttrType])
+	}
+}
+
+func TestEncodeWithOptions_ImageIDTooLong(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	longID := make([]byte, 256)
+	err := EncodeWithOptions(bytes.NewBuffer(nil), img, &EncodeOptions{ImageID: longID})
+	if err == nil {
+		t.Fatal("expected error for image ID > 255 bytes")
+	}
+	if !errors.Is(err, ErrFormat) {
+		t.Fatalf("expected ErrFormat, got %v", err)
 	}
 }

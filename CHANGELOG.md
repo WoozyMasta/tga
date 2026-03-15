@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning][].
 * TGA encode support for true-color `16-bit` and `24-bit` output.
 * TGA encode support for color-mapped (`paletted`) images.
 * `EncodeOptions.PixelDepth` and `EncodeOptions.ColorMapDepth`.
+* Added encode options for origin and image ID field.
 * TGA 2.0 metadata writing via `EncodeOptions.Metadata`
   (footer, extension area, developer area, and thumbnail/postage stamp).
 

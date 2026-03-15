@@ -68,6 +68,25 @@ Encode with TGA 2.0 metadata:
 		},
 	})
 
+Encode with bottom-left origin and image ID:
+
+	outBottom, _ := os.Create("out-bottom.tga")
+	defer outBottom.Close()
+	err := tga.EncodeWithOptions(outBottom, img, &tga.EncodeOptions{
+		OriginBottom: true,
+		ImageID:      []byte("preview-id"),
+	})
+
+Encode with explicit TGA 2.0 alpha semantics:
+
+	outAlpha, _ := os.Create("out-alpha.tga")
+	defer outAlpha.Close()
+	err := tga.EncodeWithOptions(outAlpha, img, &tga.EncodeOptions{
+		Metadata: &tga.TGA2Metadata{
+			AttributesType: 3,
+		},
+	})
+
 With image.Decode (after import _ "github.com/woozymasta/tga/register" or tga.RegisterFormat()):
 
 	img, format, err := image.Decode(f)
