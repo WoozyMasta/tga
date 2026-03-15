@@ -216,24 +216,29 @@ func decodeUncompressed(r io.Reader, w, h, depth int, flipY bool) (image.Image, 
 	bytesPerPixel := (depth + 7) / 8
 	rowSize := w * bytesPerPixel
 
-	var img image.Image
-	var pix []uint8
-	var stride int
-	var isGray bool
-
 	if depth == 8 {
 		gray := image.NewGray(image.Rect(0, 0, w, h))
-		img = gray
-		pix = gray.Pix
-		stride = gray.Stride
-		isGray = true
-	} else {
-		nrgba := image.NewNRGBA(image.Rect(0, 0, w, h))
-		img = nrgba
-		pix = nrgba.Pix
-		stride = nrgba.Stride
+		rowBuf := make([]byte, rowSize)
+
+		for y := range h {
+			destY := y
+			if flipY {
+				destY = h - 1 - y
+			}
+
+			destOffset := destY * gray.Stride
+
+			if _, err := io.ReadFull(r, rowBuf); err != nil {
+				return nil, err
+			}
+
+			copy(gray.Pix[destOffset:destOffset+w], rowBuf)
+		}
+
+		return gray, nil
 	}
 
+	nrgba := image.NewNRGBA(image.Rect(0, 0, w, h))
 	rowBuf := make([]byte, rowSize)
 
 	for y := range h {
@@ -242,20 +247,15 @@ func decodeUncompressed(r io.Reader, w, h, depth int, flipY bool) (image.Image, 
 			destY = h - 1 - y
 		}
 
-		destOffset := destY * stride
-
 		if _, err := io.ReadFull(r, rowBuf); err != nil {
 			return nil, err
 		}
 
-		if isGray {
-			copy(pix[destOffset:], rowBuf)
-		} else {
-			convertRowToNRGBA(pix[destOffset:], rowBuf, w, depth)
-		}
+		destOffset := destY * nrgba.Stride
+		convertRowToNRGBA(nrgba.Pix[destOffset:destOffset+w*4], rowBuf, w, depth)
 	}
 
-	return img, nil
+	return nrgba, nil
 }
 
 // decodeUncompressedPaletted reads uncompressed color-mapped image data.
@@ -306,6 +306,7 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 	}
 
 	pixelBuf := make([]byte, bytesPerPixel)
+	rawBuf := make([]byte, 128*bytesPerPixel)
 	pixelsRead := 0
 	outIdx := 0
 
@@ -365,7 +366,7 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 				outIdx += count
 			} else {
 				rawLen := count * bytesPerPixel
-				buf := make([]byte, rawLen)
+				buf := rawBuf[:rawLen]
 				if _, err := io.ReadFull(r, buf); err != nil {
 					return nil, err
 				}
@@ -440,48 +441,53 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 // convertRowToNRGBA converts one row of TGA BGR/BGRA bytes to NRGBA (RGBA).
 // dst must have length w*4.
 func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
-	di := 0
-	si := 0
-
 	switch depth {
 	case 24:
-		for range w {
-			b := src[si]
-			g := src[si+1]
-			r := src[si+2]
-			dst[di+0] = r
-			dst[di+1] = g
-			dst[di+2] = b
-			dst[di+3] = 0xff
-			si += 3
-			di += 4
-		}
+		convertRow24ToNRGBA(dst[:w*4], src[:w*3])
 
 	case 32:
-		for range w {
-			b := src[si]
-			g := src[si+1]
-			r := src[si+2]
-			a := src[si+3]
-			dst[di+0] = r
-			dst[di+1] = g
-			dst[di+2] = b
-			dst[di+3] = a
-			si += 4
-			di += 4
-		}
+		convertRow32ToNRGBA(dst[:w*4], src[:w*4])
 
 	case 15, 16:
-		for range w {
-			v := uint16(src[si]) | uint16(src[si+1])<<8
-			c := decodeRGB555(v)
-			dst[di+0] = c.R
-			dst[di+1] = c.G
-			dst[di+2] = c.B
-			dst[di+3] = c.A
-			si += 2
-			di += 4
-		}
+		convertRow16ToNRGBA(dst[:w*4], src[:w*2])
+	}
+}
+
+// convertRow24ToNRGBA converts one 24-bit BGR row to 32-bit RGBA.
+func convertRow24ToNRGBA(dst []byte, src []byte) {
+	di := 0
+	for si := 0; si < len(src); si += 3 {
+		dst[di+0] = src[si+2]
+		dst[di+1] = src[si+1]
+		dst[di+2] = src[si+0]
+		dst[di+3] = 0xff
+		di += 4
+	}
+}
+
+// convertRow32ToNRGBA converts one 32-bit BGRA row to 32-bit RGBA.
+func convertRow32ToNRGBA(dst []byte, src []byte) {
+	di := 0
+	for si := 0; si < len(src); si += 4 {
+		dst[di+0] = src[si+2]
+		dst[di+1] = src[si+1]
+		dst[di+2] = src[si+0]
+		dst[di+3] = src[si+3]
+		di += 4
+	}
+}
+
+// convertRow16ToNRGBA converts one 15/16-bit BGR555 row to 32-bit RGBA.
+func convertRow16ToNRGBA(dst []byte, src []byte) {
+	di := 0
+	for si := 0; si < len(src); si += 2 {
+		v := uint16(src[si]) | uint16(src[si+1])<<8
+		c := decodeRGB555(v)
+		dst[di+0] = c.R
+		dst[di+1] = c.G
+		dst[di+2] = c.B
+		dst[di+3] = c.A
+		di += 4
 	}
 }
 
