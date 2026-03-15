@@ -153,6 +153,167 @@ func TestDecode_RLEOverrun(t *testing.T) {
 	}
 }
 
+func TestDecode_RLETrueColor24(t *testing.T) {
+	header := [18]byte{
+		0, 0, 10,
+		0, 0, 0, 0, 0,
+		0, 0, 0, 0,
+		3, 0, 1, 0,
+		24, 0x20,
+	}
+
+	// Packet 1: RLE run, 2 red pixels (BGR 0,0,255)
+	// Packet 2: raw, 1 blue pixel (BGR 255,0,0)
+	payload := []byte{
+		0x81, 0, 0, 255,
+		0x00, 255, 0, 0,
+	}
+
+	data := append(header[:], payload...)
+	img, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode RLE true color: %v", err)
+	}
+
+	nrgba, ok := img.(*image.NRGBA)
+	if !ok {
+		t.Fatalf("expected *image.NRGBA, got %T", img)
+	}
+
+	p0 := nrgba.NRGBAAt(0, 0)
+	p1 := nrgba.NRGBAAt(1, 0)
+	p2 := nrgba.NRGBAAt(2, 0)
+	if p0 != (color.NRGBA{R: 255, G: 0, B: 0, A: 255}) {
+		t.Fatalf("pixel 0 mismatch: %+v", p0)
+	}
+	if p1 != (color.NRGBA{R: 255, G: 0, B: 0, A: 255}) {
+		t.Fatalf("pixel 1 mismatch: %+v", p1)
+	}
+	if p2 != (color.NRGBA{R: 0, G: 0, B: 255, A: 255}) {
+		t.Fatalf("pixel 2 mismatch: %+v", p2)
+	}
+}
+
+func TestDecode_RLEGrayscale8(t *testing.T) {
+	header := [18]byte{
+		0, 0, 11,
+		0, 0, 0, 0, 0,
+		0, 0, 0, 0,
+		4, 0, 1, 0,
+		8, 0x20,
+	}
+
+	// Packet 1: RLE run of 3 pixels with value 42.
+	// Packet 2: raw packet with 1 pixel value 200.
+	payload := []byte{
+		0x82, 42,
+		0x00, 200,
+	}
+
+	data := append(header[:], payload...)
+	img, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode RLE grayscale: %v", err)
+	}
+
+	gray, ok := img.(*image.Gray)
+	if !ok {
+		t.Fatalf("expected *image.Gray, got %T", img)
+	}
+
+	if got := gray.GrayAt(0, 0).Y; got != 42 {
+		t.Fatalf("pixel 0 mismatch: %d", got)
+	}
+	if got := gray.GrayAt(1, 0).Y; got != 42 {
+		t.Fatalf("pixel 1 mismatch: %d", got)
+	}
+	if got := gray.GrayAt(2, 0).Y; got != 42 {
+		t.Fatalf("pixel 2 mismatch: %d", got)
+	}
+	if got := gray.GrayAt(3, 0).Y; got != 200 {
+		t.Fatalf("pixel 3 mismatch: %d", got)
+	}
+}
+
+func TestDecode_RLEPaletted8(t *testing.T) {
+	header := [18]byte{
+		0, 1, 9,
+		0, 0,
+		2, 0,
+		24,
+		0, 0, 0, 0,
+		2, 0, 2, 0,
+		8, 0x20,
+	}
+
+	// Palette (24-bit BGR): idx 0 = black, idx 1 = red.
+	palette := []byte{
+		0, 0, 0,
+		0, 0, 255,
+	}
+
+	// One RLE run packet: 4 pixels of index 1.
+	payload := []byte{0x83, 0x01}
+
+	data := append(header[:], palette...)
+	data = append(data, payload...)
+	img, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode RLE paletted: %v", err)
+	}
+
+	paletted, ok := img.(*image.Paletted)
+	if !ok {
+		t.Fatalf("expected *image.Paletted, got %T", img)
+	}
+
+	for i, v := range paletted.Pix {
+		if v != 1 {
+			t.Fatalf("pixel index %d mismatch: %d", i, v)
+		}
+	}
+}
+
+func TestDecode_UnsupportedDepthForRLEType(t *testing.T) {
+	header := [18]byte{
+		0, 0, 10,
+		0, 0, 0, 0, 0,
+		0, 0, 0, 0,
+		1, 0, 1, 0,
+		12, 0x20,
+	}
+
+	_, err := Decode(bytes.NewReader(header[:]))
+	if err == nil {
+		t.Fatal("expected error for unsupported true-color depth")
+	}
+
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("expected ErrUnsupported, got %v", err)
+	}
+}
+
+func TestDecode_PalettedWithoutColorMap(t *testing.T) {
+	header := [18]byte{
+		0, 0, 1,
+		0, 0,
+		0, 0,
+		0,
+		0, 0, 0, 0,
+		1, 0, 1, 0,
+		8, 0x20,
+	}
+
+	_, err := Decode(bytes.NewReader(header[:]))
+	if err == nil {
+		t.Fatal("expected error for paletted image without color map")
+	}
+
+	if !errors.Is(err, ErrFormat) {
+		t.Fatalf("expected ErrFormat, got %v", err)
+	}
+}
+
 func TestDecodeRGB555(t *testing.T) {
 	tests := []struct {
 		v    uint16

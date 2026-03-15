@@ -29,6 +29,12 @@ Encode example:
 	defer out.Close()
 	err := tga.Encode(out, img)
 
+Encode with RLE compression:
+
+	outRLE, _ := os.Create("out-rle.tga")
+	defer outRLE.Close()
+	err := tga.EncodeWithOptions(outRLE, img, &tga.EncodeOptions{RLE: true})
+
 With image.Decode (after import _ "github.com/woozymasta/tga/register" or tga.RegisterFormat()):
 
 	img, format, err := image.Decode(f)

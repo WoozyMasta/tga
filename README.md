@@ -15,4 +15,7 @@ cfg, err := tga.DecodeConfig(r)
 
 // Encode
 err := tga.Encode(w, img)
+
+// Encode with RLE compression
+err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{RLE: true})
 ```

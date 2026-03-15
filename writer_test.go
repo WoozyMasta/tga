@@ -99,3 +99,97 @@ func TestEncode_NonZeroBounds(t *testing.T) {
 		t.Errorf("pixel (9,9): got %v", c)
 	}
 }
+
+func TestEncodeWithOptions_RLEGray(t *testing.T) {
+	img := image.NewGray(image.Rect(0, 0, 8, 2))
+	for i := 0; i < len(img.Pix); i++ {
+		if i < 8 {
+			img.Pix[i] = 33
+			continue
+		}
+
+		img.Pix[i] = byte(i)
+	}
+
+	var buf bytes.Buffer
+	err := EncodeWithOptions(&buf, img, &EncodeOptions{RLE: true})
+	if err != nil {
+		t.Fatalf("EncodeWithOptions Gray RLE: %v", err)
+	}
+
+	data := buf.Bytes()
+	if len(data) < 18 {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+	if data[2] != typeRLEGrayscale {
+		t.Fatalf("header image type = %d, want %d", data[2], typeRLEGrayscale)
+	}
+
+	dec, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode RLE gray: %v", err)
+	}
+
+	if !imagesEqual(img, dec) {
+		t.Fatal("gray RLE round-trip mismatch")
+	}
+}
+
+func TestEncodeWithOptions_RLENRGBA(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 8; x++ {
+			c := color.NRGBA{R: 10, G: 20, B: 30, A: 255}
+			if y == 1 {
+				c = color.NRGBA{
+					R: byte(x * 20),
+					G: byte(y * 40),
+					B: byte(x * 15),
+					A: byte(200 + x),
+				}
+			}
+			img.SetNRGBA(x, y, c)
+		}
+	}
+
+	var buf bytes.Buffer
+	err := EncodeWithOptions(&buf, img, &EncodeOptions{RLE: true})
+	if err != nil {
+		t.Fatalf("EncodeWithOptions NRGBA RLE: %v", err)
+	}
+
+	data := buf.Bytes()
+	if len(data) < 18 {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+	if data[2] != typeRLETrueColor {
+		t.Fatalf("header image type = %d, want %d", data[2], typeRLETrueColor)
+	}
+
+	dec, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode RLE nrgba: %v", err)
+	}
+
+	if !imagesEqual(img, dec) {
+		t.Fatal("nrgba RLE round-trip mismatch")
+	}
+}
+
+func TestEncode_DefaultUncompressed(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+
+	var buf bytes.Buffer
+	if err := Encode(&buf, img); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	data := buf.Bytes()
+	if len(data) < 18 {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+
+	if data[2] != typeTrueColor {
+		t.Fatalf("header image type = %d, want %d", data[2], typeTrueColor)
+	}
+}

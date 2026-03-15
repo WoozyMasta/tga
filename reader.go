@@ -96,6 +96,10 @@ func Decode(r io.Reader) (image.Image, error) {
 		return nil, ErrFormat
 	}
 
+	if err := validateImageSpec(imgType, pixelDepth, hasCMap, cMapLen); err != nil {
+		return nil, err
+	}
+
 	if idLen > 0 {
 		if _, err := br.Discard(idLen); err != nil {
 			return nil, err
@@ -161,6 +165,45 @@ func Decode(r io.Reader) (image.Image, error) {
 		return decodeRLEPaletted(br, width, height, pixelDepth, flipY, palette)
 	default:
 		return nil, ErrUnsupported
+	}
+}
+
+// validateImageSpec checks that image type and bit depth combination is supported.
+func validateImageSpec(imgType uint8, pixelDepth int, hasCMap bool, cMapLen int) error {
+	switch imgType {
+	case typeTrueColor, typeRLETrueColor:
+		if !isTrueColorDepth(pixelDepth) {
+			return ErrUnsupported
+		}
+
+	case typeGrayscale, typeRLEGrayscale:
+		if pixelDepth != 8 {
+			return ErrUnsupported
+		}
+
+	case typePaletted, typeRLEPaletted:
+		if pixelDepth != 8 {
+			return ErrUnsupported
+		}
+
+		if !hasCMap || cMapLen == 0 {
+			return ErrFormat
+		}
+
+	default:
+		return ErrUnsupported
+	}
+
+	return nil
+}
+
+// isTrueColorDepth reports whether depth is one of supported true-color bit depths.
+func isTrueColorDepth(pixelDepth int) bool {
+	switch pixelDepth {
+	case 15, 16, 24, 32:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -364,7 +407,7 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 			return nil, ErrRLEOverrun
 		}
 
-		// If packetType is not 0, it's a raw packet
+		// If packetType is not 0, it's an RLE packet.
 		if packetType != 0 {
 			val, err := r.ReadByte()
 			if err != nil {

@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## Unreleased
+
+### Added
+
+* `EncodeWithOptions` and `EncodeOptions{RLE:true}` for RLE-compressed output.
+
+### Changed
+
+* Decoder now validates image type/bit-depth combinations before pixel decode.
+
+### Removed
+
 ## [1.0.0][] - 2026-02-10
 
 ### Added
