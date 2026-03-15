@@ -57,6 +57,17 @@ Encode paletted image with 32-bit color map:
 	defer outPal.Close()
 	err := tga.EncodeWithOptions(outPal, palettedImg, &tga.EncodeOptions{ColorMapDepth: 32})
 
+Encode with TGA 2.0 metadata:
+
+	outMeta, _ := os.Create("out-meta.tga")
+	defer outMeta.Close()
+	err := tga.EncodeWithOptions(outMeta, img, &tga.EncodeOptions{
+		Metadata: &tga.TGA2Metadata{
+			Author: "Woozy",
+			Gamma:  2.2,
+		},
+	})
+
 With image.Decode (after import _ "github.com/woozymasta/tga/register" or tga.RegisterFormat()):
 
 	img, format, err := image.Decode(f)

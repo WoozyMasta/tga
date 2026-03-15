@@ -14,14 +14,16 @@ import (
 
 // EncodeOptions controls optional TGA encoding features.
 type EncodeOptions struct {
-	// RLE enables TGA RLE packet compression (types 10/11).
-	RLE bool
+	// Metadata enables writing TGA 2.0 footer/extension/developer areas.
+	Metadata *TGA2Metadata
 	// PixelDepth sets true-color depth for non-grayscale/non-paletted output.
 	// Supported values: 16, 24, 32. Zero means default 32.
 	PixelDepth int
 	// ColorMapDepth sets palette entry depth for paletted output.
 	// Supported values: 24, 32. Zero means auto (24 unless palette has alpha).
 	ColorMapDepth int
+	// RLE enables TGA RLE packet compression (types 10/11).
+	RLE bool
 }
 
 // Encode writes the image m in TGA format to w.
@@ -39,6 +41,8 @@ func Encode(w io.Writer, m image.Image) error {
 // Other image types are converted to NRGBA. Origin is top-left (descriptor bit 5 set).
 // No TGA 2.0 footer or extension area is written.
 func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
+	cw := &countingWriter{w: w}
+
 	b := m.Bounds()
 	mw := b.Dx()
 	mh := b.Dy()
@@ -83,15 +87,21 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			header[2] = typeGrayscale
 		}
 		header[16] = 8
-		if _, err := w.Write(header[:]); err != nil {
+		if _, err := cw.Write(header[:]); err != nil {
 			return err
 		}
 
 		if settings.RLE {
-			return encodeGrayRLE(w, src, b)
+			if err := encodeGrayRLE(cw, src, b); err != nil {
+				return err
+			}
+		} else {
+			if err := encodeGray(cw, src, b); err != nil {
+				return err
+			}
 		}
 
-		return encodeGray(w, src, b)
+		return writeTGA2Tail(cw, settings.Metadata)
 
 	case *image.Paletted:
 		cMapDepth, err := resolveColorMapDepth(settings.ColorMapDepth, src.Palette)
@@ -120,19 +130,25 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			header[7] = 32
 		}
 		header[16] = 8
-		if _, err := w.Write(header[:]); err != nil {
+		if _, err := cw.Write(header[:]); err != nil {
 			return err
 		}
 
-		if err := writePalette(w, src.Palette, cMapDepth); err != nil {
+		if err := writePalette(cw, src.Palette, cMapDepth); err != nil {
 			return err
 		}
 
 		if settings.RLE {
-			return encodePalettedRLE(w, src, b)
+			if err := encodePalettedRLE(cw, src, b); err != nil {
+				return err
+			}
+		} else {
+			if err := encodePaletted(cw, src, b); err != nil {
+				return err
+			}
 		}
 
-		return encodePaletted(w, src, b)
+		return writeTGA2Tail(cw, settings.Metadata)
 
 	case *image.NRGBA:
 		if settings.RLE {
@@ -158,15 +174,21 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		default:
 			header[16] = 32
 		}
-		if _, err := w.Write(header[:]); err != nil {
+		if _, err := cw.Write(header[:]); err != nil {
 			return err
 		}
 
 		if settings.RLE {
-			return encodeNRGBARLE(w, src, b, trueColorDepth)
+			if err := encodeNRGBARLE(cw, src, b, trueColorDepth); err != nil {
+				return err
+			}
+		} else {
+			if err := encodeNRGBA(cw, src, b, trueColorDepth); err != nil {
+				return err
+			}
 		}
 
-		return encodeNRGBA(w, src, b, trueColorDepth)
+		return writeTGA2Tail(cw, settings.Metadata)
 
 	default:
 		if settings.RLE {
@@ -190,7 +212,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		default:
 			header[16] = 32
 		}
-		if _, err := w.Write(header[:]); err != nil {
+		if _, err := cw.Write(header[:]); err != nil {
 			return err
 		}
 
@@ -198,10 +220,16 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		draw.Draw(dst, b, m, b.Min, draw.Src)
 
 		if settings.RLE {
-			return encodeNRGBARLE(w, dst, b, trueColorDepth)
+			if err := encodeNRGBARLE(cw, dst, b, trueColorDepth); err != nil {
+				return err
+			}
+		} else {
+			if err := encodeNRGBA(cw, dst, b, trueColorDepth); err != nil {
+				return err
+			}
 		}
 
-		return encodeNRGBA(w, dst, b, trueColorDepth)
+		return writeTGA2Tail(cw, settings.Metadata)
 	}
 }
 

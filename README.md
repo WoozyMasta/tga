@@ -27,4 +27,13 @@ err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{PixelDepth: 16})
 
 // Encode paletted image with 32-bit palette entries
 err := tga.EncodeWithOptions(w, palettedImg, &tga.EncodeOptions{ColorMapDepth: 32})
+
+// Encode with TGA 2.0 metadata (footer + extension/developer areas)
+err := tga.EncodeWithOptions(w, img, &tga.EncodeOptions{
+  Metadata: &tga.TGA2Metadata{
+    Author:    "WoozyMasta",
+    Gamma:     2.2,
+    Timestamp: time.Now(),
+  },
+})
 ```
