@@ -41,7 +41,13 @@ func Encode(w io.Writer, m image.Image) error {
 // Other image types are converted to NRGBA. Origin is top-left (descriptor bit 5 set).
 // No TGA 2.0 footer or extension area is written.
 func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
-	cw := &countingWriter{w: w}
+	settings := effectiveEncodeOptions(opts)
+	out := w
+	var cw *countingWriter
+	if settings.Metadata != nil {
+		cw = &countingWriter{w: w}
+		out = cw
+	}
 
 	b := m.Bounds()
 	mw := b.Dx()
@@ -73,7 +79,6 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 	binary.LittleEndian.PutUint16(header[12:14], mw16)
 	binary.LittleEndian.PutUint16(header[14:16], mh16)
 
-	settings := effectiveEncodeOptions(opts)
 	trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
 	if err != nil {
 		return err
@@ -87,21 +92,21 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			header[2] = typeGrayscale
 		}
 		header[16] = 8
-		if _, err := cw.Write(header[:]); err != nil {
+		if _, err := out.Write(header[:]); err != nil {
 			return err
 		}
 
 		if settings.RLE {
-			if err := encodeGrayRLE(cw, src, b); err != nil {
+			if err := encodeGrayRLE(out, src, b); err != nil {
 				return err
 			}
 		} else {
-			if err := encodeGray(cw, src, b); err != nil {
+			if err := encodeGray(out, src, b); err != nil {
 				return err
 			}
 		}
 
-		return writeTGA2Tail(cw, settings.Metadata)
+		return writeTGA2TailIfNeeded(cw, settings.Metadata)
 
 	case *image.Paletted:
 		cMapDepth, err := resolveColorMapDepth(settings.ColorMapDepth, src.Palette)
@@ -130,25 +135,25 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			header[7] = 32
 		}
 		header[16] = 8
-		if _, err := cw.Write(header[:]); err != nil {
+		if _, err := out.Write(header[:]); err != nil {
 			return err
 		}
 
-		if err := writePalette(cw, src.Palette, cMapDepth); err != nil {
+		if err := writePalette(out, src.Palette, cMapDepth); err != nil {
 			return err
 		}
 
 		if settings.RLE {
-			if err := encodePalettedRLE(cw, src, b); err != nil {
+			if err := encodePalettedRLE(out, src, b); err != nil {
 				return err
 			}
 		} else {
-			if err := encodePaletted(cw, src, b); err != nil {
+			if err := encodePaletted(out, src, b); err != nil {
 				return err
 			}
 		}
 
-		return writeTGA2Tail(cw, settings.Metadata)
+		return writeTGA2TailIfNeeded(cw, settings.Metadata)
 
 	case *image.NRGBA:
 		if settings.RLE {
@@ -156,6 +161,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		} else {
 			header[2] = typeTrueColor
 		}
+
 		// True-color descriptor alpha bits.
 		// 16-bit uses one attribute bit, 32-bit uses eight, 24-bit uses none.
 		switch trueColorDepth {
@@ -166,6 +172,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		default:
 			header[17] = 0x28
 		}
+
 		switch trueColorDepth {
 		case 16:
 			header[16] = 16
@@ -174,21 +181,22 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		default:
 			header[16] = 32
 		}
-		if _, err := cw.Write(header[:]); err != nil {
+
+		if _, err := out.Write(header[:]); err != nil {
 			return err
 		}
 
 		if settings.RLE {
-			if err := encodeNRGBARLE(cw, src, b, trueColorDepth); err != nil {
+			if err := encodeNRGBARLE(out, src, b, trueColorDepth); err != nil {
 				return err
 			}
 		} else {
-			if err := encodeNRGBA(cw, src, b, trueColorDepth); err != nil {
+			if err := encodeNRGBA(out, src, b, trueColorDepth); err != nil {
 				return err
 			}
 		}
 
-		return writeTGA2Tail(cw, settings.Metadata)
+		return writeTGA2TailIfNeeded(cw, settings.Metadata)
 
 	default:
 		if settings.RLE {
@@ -196,6 +204,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		} else {
 			header[2] = typeTrueColor
 		}
+
 		switch trueColorDepth {
 		case 16:
 			header[17] = 0x21
@@ -204,6 +213,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		default:
 			header[17] = 0x28
 		}
+
 		switch trueColorDepth {
 		case 16:
 			header[16] = 16
@@ -212,7 +222,8 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		default:
 			header[16] = 32
 		}
-		if _, err := cw.Write(header[:]); err != nil {
+
+		if _, err := out.Write(header[:]); err != nil {
 			return err
 		}
 
@@ -220,16 +231,16 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		draw.Draw(dst, b, m, b.Min, draw.Src)
 
 		if settings.RLE {
-			if err := encodeNRGBARLE(cw, dst, b, trueColorDepth); err != nil {
+			if err := encodeNRGBARLE(out, dst, b, trueColorDepth); err != nil {
 				return err
 			}
 		} else {
-			if err := encodeNRGBA(cw, dst, b, trueColorDepth); err != nil {
+			if err := encodeNRGBA(out, dst, b, trueColorDepth); err != nil {
 				return err
 			}
 		}
 
-		return writeTGA2Tail(cw, settings.Metadata)
+		return writeTGA2TailIfNeeded(cw, settings.Metadata)
 	}
 }
 
@@ -240,6 +251,15 @@ func effectiveEncodeOptions(opts *EncodeOptions) EncodeOptions {
 	}
 
 	return *opts
+}
+
+// writeTGA2TailIfNeeded writes TGA 2.0 tail only when metadata is enabled.
+func writeTGA2TailIfNeeded(cw *countingWriter, meta *TGA2Metadata) error {
+	if cw == nil || meta == nil {
+		return nil
+	}
+
+	return writeTGA2Tail(cw, meta)
 }
 
 // resolveTrueColorDepth validates and resolves the output true-color depth.
@@ -291,8 +311,19 @@ func encodeGray(w io.Writer, m *image.Gray, b image.Rectangle) error {
 
 // encodeGrayRLE writes 8-bit grayscale pixel data using TGA RLE packets.
 func encodeGrayRLE(w io.Writer, m *image.Gray, b image.Rectangle) error {
-	packed := packGrayPixels(m, b)
-	return encodeRLEPackets(w, packed, 1)
+	header := []byte{0}
+	value := []byte{0}
+
+	width := b.Dx()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		srcOffset := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X - m.Rect.Min.X)
+		row := m.Pix[srcOffset : srcOffset+width]
+		if err := encodeRLEPackets1WithScratch(w, row, header, value); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // encodeNRGBA writes true-color pixel data in row order (top to bottom).
@@ -373,22 +404,6 @@ func encodeNRGBARLE(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int) e
 	return encodeRLEPackets(w, packed, bytesPerPixel)
 }
 
-// packGrayPixels copies grayscale pixels into a contiguous top-to-bottom buffer.
-func packGrayPixels(m *image.Gray, b image.Rectangle) []byte {
-	width := b.Dx()
-	height := b.Dy()
-	packed := make([]byte, width*height)
-	dst := 0
-
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		srcOffset := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X - m.Rect.Min.X)
-		copy(packed[dst:dst+width], m.Pix[srcOffset:srcOffset+width])
-		dst += width
-	}
-
-	return packed
-}
-
 // packNRGBAPixels converts NRGBA rows to contiguous true-color bytes.
 func packNRGBAPixels(m *image.NRGBA, b image.Rectangle, depth int) ([]byte, int, error) {
 	width := b.Dx()
@@ -459,24 +474,19 @@ func encodePaletted(w io.Writer, m *image.Paletted, b image.Rectangle) error {
 
 // encodePalettedRLE writes 8-bit indexed pixel data using TGA RLE packets.
 func encodePalettedRLE(w io.Writer, m *image.Paletted, b image.Rectangle) error {
-	packed := packPalettedPixels(m, b)
-	return encodeRLEPackets(w, packed, 1)
-}
+	header := []byte{0}
+	value := []byte{0}
 
-// packPalettedPixels copies index data into contiguous top-to-bottom buffer.
-func packPalettedPixels(m *image.Paletted, b image.Rectangle) []byte {
 	width := b.Dx()
-	height := b.Dy()
-	packed := make([]byte, width*height)
-	dst := 0
-
 	for y := b.Min.Y; y < b.Max.Y; y++ {
-		srcOffset := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X - m.Rect.Min.X)
-		copy(packed[dst:dst+width], m.Pix[srcOffset:srcOffset+width])
-		dst += width
+		i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X - m.Rect.Min.X)
+		row := m.Pix[i0 : i0+width]
+		if err := encodeRLEPackets1WithScratch(w, row, header, value); err != nil {
+			return err
+		}
 	}
 
-	return packed
+	return nil
 }
 
 // writePalette writes a color map in BGR/BGRA order.
@@ -531,6 +541,10 @@ func encodeRGB555(r, g, b, a uint8) uint16 {
 
 // encodeRLEPackets writes TGA RLE packets from packed pixels.
 func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
+	if bytesPerPixel == 1 {
+		return encodeRLEPackets1(w, packed)
+	}
+
 	totalPixels := len(packed) / bytesPerPixel
 	i := 0
 	header := []byte{0}
@@ -592,6 +606,82 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 	return nil
 }
 
+// encodeRLEPackets1 writes TGA RLE packets for one-byte pixels.
+func encodeRLEPackets1(w io.Writer, packed []byte) error {
+	header := []byte{0}
+	value := []byte{0}
+
+	return encodeRLEPackets1WithScratch(w, packed, header, value)
+}
+
+// encodeRLEPackets1WithScratch writes one-byte-pixel RLE using caller scratch.
+func encodeRLEPackets1WithScratch(w io.Writer, packed []byte, header, value []byte) error {
+	totalPixels := len(packed)
+	i := 0
+
+	for i < totalPixels {
+		runLen := 1
+		pv := packed[i]
+		for runLen < 128 && i+runLen < totalPixels && packed[i+runLen] == pv {
+			runLen++
+		}
+
+		if runLen > 1 {
+			packetHeader, err := makePacketHeader(runLen, true)
+			if err != nil {
+				return err
+			}
+
+			header[0] = packetHeader
+			if _, err := w.Write(header); err != nil {
+				return err
+			}
+
+			value[0] = pv
+			if _, err := w.Write(value); err != nil {
+				return err
+			}
+
+			i += runLen
+			continue
+		}
+
+		rawStart := i
+		rawLen := 1
+		i++
+
+		for rawLen < 128 && i < totalPixels {
+			runLen = 1
+			pv = packed[i]
+			for runLen < 128 && i+runLen < totalPixels && packed[i+runLen] == pv {
+				runLen++
+			}
+			if runLen > 1 {
+				break
+			}
+
+			rawLen++
+			i++
+		}
+
+		packetHeader, err := makePacketHeader(rawLen, false)
+		if err != nil {
+			return err
+		}
+
+		header[0] = packetHeader
+		if _, err := w.Write(header); err != nil {
+			return err
+		}
+
+		if _, err := w.Write(packed[rawStart : rawStart+rawLen]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // findRunLength returns equal-pixel run length limited to TGA max packet size.
 func findRunLength(packed []byte, bytesPerPixel int, start, totalPixels int) int {
 	runLen := 1
@@ -610,9 +700,30 @@ func pixelsEqualAt(packed []byte, bytesPerPixel int, i, j int) bool {
 	ii := i * bytesPerPixel
 	jj := j * bytesPerPixel
 
-	for k := range bytesPerPixel {
-		if packed[ii+k] != packed[jj+k] {
-			return false
+	switch bytesPerPixel {
+	case 1:
+		return packed[ii] == packed[jj]
+
+	case 2:
+		return packed[ii] == packed[jj] &&
+			packed[ii+1] == packed[jj+1]
+
+	case 3:
+		return packed[ii] == packed[jj] &&
+			packed[ii+1] == packed[jj+1] &&
+			packed[ii+2] == packed[jj+2]
+
+	case 4:
+		return packed[ii] == packed[jj] &&
+			packed[ii+1] == packed[jj+1] &&
+			packed[ii+2] == packed[jj+2] &&
+			packed[ii+3] == packed[jj+3]
+
+	default:
+		for k := range bytesPerPixel {
+			if packed[ii+k] != packed[jj+k] {
+				return false
+			}
 		}
 	}
 
