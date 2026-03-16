@@ -9,6 +9,13 @@ Go package for decoding and encoding TGA (Truevision TARGA) images.
 * TGA 2.0 write support: footer, extension/developer areas, and metadata fields.
 * Encode options: `PixelDepth`, `ColorMapDepth`, `OriginBottom`, `ImageID`.
 
+> [!NOTE]  
+> TGA has no stable magic bytes, so global registration via
+> `image.RegisterFormat` can conflict with other decoders.
+> Use direct `tga.Decode`/`tga.DecodeConfig` by default.
+> If you still need `image.Decode`, opt in with blank import:
+> `import _ "github.com/woozymasta/tga/register"`.
+
 ```go
 import "github.com/woozymasta/tga"
 
