@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
-## Unreleased
+## [1.1.0][] - 2026-03-16
 
 ### Added
 
@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning][].
 * Improved decode performance and reduced internal overhead, especially for
   large images and RLE-compressed files.
 * Expanded test and benchmark coverage for new format capabilities.
+
+[1.1.0]: https://github.com/WoozyMasta/tga/compare/v1.0.0...v1.1.0
 
 ### Removed
 
