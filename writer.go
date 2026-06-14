@@ -425,7 +425,54 @@ func encodeGrayRLE(w io.Writer, m *image.Gray, b image.Rectangle, originBottom b
 	return nil
 }
 
+// trueColorBytesPerPixel returns packed bytes per pixel for a true-color depth.
+func trueColorBytesPerPixel(depth int) (int, error) {
+	switch depth {
+	case 16:
+		return 2, nil
+	case 24:
+		return 3, nil
+	case 32:
+		return 4, nil
+	default:
+		return 0, ErrUnsupported
+	}
+}
+
+// packNRGBARow converts one NRGBA row (RGBA bytes, len width*4)
+// into packed TGA true-color bytes: BGRA (32), BGR (24) or little-endian RGB555 (16).
+// len(dst) must equal width*bytesPerPixel for the given depth.
+// This is the single point where pixel layout conversion happens for true-color encoding.
+func packNRGBARow(dst, src []byte, depth int) {
+	switch depth {
+	case 32:
+		// Bulk copy (memmove) then swap only R/B in place:
+		// this writes two bytes per pixel instead of gathering all four,
+		// which the compiler turns into much tighter code than an element-wise copy.
+		copy(dst, src)
+		for i := 0; i < len(dst); i += 4 {
+			dst[i+0], dst[i+2] = dst[i+2], dst[i+0] // RGBA -> BGRA
+		}
+
+	case 24:
+		for si, di := 0, 0; si < len(src); si, di = si+4, di+3 {
+			dst[di+0] = src[si+2] // B
+			dst[di+1] = src[si+1] // G
+			dst[di+2] = src[si+0] // R
+		}
+
+	case 16:
+		for si, di := 0, 0; si < len(src); si, di = si+4, di+2 {
+			v := encodeRGB555(src[si+0], src[si+1], src[si+2], src[si+3])
+			binary.LittleEndian.PutUint16(dst[di:di+2], v)
+		}
+	}
+}
+
 // encodeNRGBA writes true-color pixel data in configured row order.
+// The depth switch is hoisted out of the row loop and the per-row conversion is
+// kept inline (no per-row call) so the compiler can tightly optimize the hot path;
+// the RLE path shares packNRGBARow instead.
 func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, originBottom bool) error {
 	width := b.Dx()
 	switch depth {
@@ -509,33 +556,16 @@ func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, orig
 }
 
 // encodeNRGBARLE writes true-color pixel data using TGA RLE packets.
+// Rows are packed and RLE-encoded one at a time, so packets never cross scan
+// lines (TGA 2.0 friendly) and no whole-image scratch buffer is allocated.
 func encodeNRGBARLE(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, originBottom bool) error {
-	packed, bytesPerPixel, err := packNRGBAPixels(m, b, depth, originBottom)
+	bytesPerPixel, err := trueColorBytesPerPixel(depth)
 	if err != nil {
 		return err
 	}
 
-	return encodeRLEPackets(w, packed, bytesPerPixel)
-}
-
-// packNRGBAPixels converts NRGBA rows to contiguous true-color bytes.
-func packNRGBAPixels(m *image.NRGBA, b image.Rectangle, depth int, originBottom bool) ([]byte, int, error) {
 	width := b.Dx()
-	height := b.Dy()
-	var bytesPerPixel int
-	switch depth {
-	case 16:
-		bytesPerPixel = 2
-	case 24:
-		bytesPerPixel = 3
-	case 32:
-		bytesPerPixel = 4
-	default:
-		return nil, 0, ErrUnsupported
-	}
-
-	packed := make([]byte, width*height*bytesPerPixel)
-	dst := 0
+	rowPacked := make([]byte, width*bytesPerPixel)
 
 	for rowIndex := 0; rowIndex < b.Dy(); rowIndex++ {
 		y := b.Min.Y + rowIndex
@@ -543,38 +573,15 @@ func packNRGBAPixels(m *image.NRGBA, b image.Rectangle, depth int, originBottom 
 			y = b.Max.Y - 1 - rowIndex
 		}
 
-		srcOffset := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
-		row := m.Pix[srcOffset : srcOffset+width*4]
+		i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
+		packNRGBARow(rowPacked, m.Pix[i0:i0+width*4], depth)
 
-		for i := 0; i < len(row); i += 4 {
-			switch depth {
-			case 16:
-				v := encodeRGB555(
-					row[i+0],
-					row[i+1],
-					row[i+2],
-					row[i+3],
-				)
-				binary.LittleEndian.PutUint16(packed[dst:dst+2], v)
-				dst += 2
-
-			case 24:
-				packed[dst+0] = row[i+2] // B
-				packed[dst+1] = row[i+1] // G
-				packed[dst+2] = row[i+0] // R
-				dst += 3
-
-			case 32:
-				packed[dst+0] = row[i+2] // B
-				packed[dst+1] = row[i+1] // G
-				packed[dst+2] = row[i+0] // R
-				packed[dst+3] = row[i+3] // A
-				dst += 4
-			}
+		if err := encodeRLEPackets(w, rowPacked, bytesPerPixel); err != nil {
+			return err
 		}
 	}
 
-	return packed, bytesPerPixel, nil
+	return nil
 }
 
 // encodePaletted writes uncompressed 8-bit paletted pixel data.
