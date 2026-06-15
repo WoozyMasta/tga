@@ -7,8 +7,11 @@
 // otherwise (and on every other architecture) it falls back to the scalar implementations,
 // which are also the source of truth for behavior.
 //
+// Set the TGA_PUREGO environment variable (or build with the `purego` tag)
+// to force the scalar path on amd64.
+//
 // The amd64 assembly is generated with github.com/mmcloughlin/avo
-// from the generator in ./asm. Regenerate with `make simd-gen`.
+// from the generator in ./asmgen. Regenerate with `make generate`.
 package simd
 
 // BGRToRGBA converts BGR pixels (3 bytes each) in src to RGBA pixels

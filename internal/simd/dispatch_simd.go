@@ -6,18 +6,33 @@
 
 package simd
 
-import "golang.org/x/sys/cpu"
+import (
+	"os"
+
+	"golang.org/x/sys/cpu"
+)
+
+// pureGo forces the scalar implementations even on a SIMD-capable CPU
+// when the TGA_PUREGO environment variable is set (to any non-empty value).
+// It is the runtime counterpart of the `purego` build tag,
+// handy for debugging or for comparing scalar vs SIMD in a single binary.
+var pureGo = os.Getenv("TGA_PUREGO") != ""
 
 // init selects the fastest kernel the running CPU supports. SSSE3 covers all
 // three conversions; AVX2 additionally doubles the swap throughput.
 // Anything the kernels can't handle (and the trailing pixels of every call)
 // is left to the scalar reference implementations.
 func init() {
+	if pureGo {
+		return
+	}
+
 	if cpu.X86.HasSSSE3 {
 		bgrToRGBAFn = bgrToRGBASSEWrapper
 		rgbaToBGRFn = rgbaToBGRSSEWrapper
 		swapRB32Fn = swapRB32SSEWrapper
 	}
+
 	if cpu.X86.HasAVX2 {
 		swapRB32Fn = swapRB32AVX2Wrapper
 	}
@@ -27,9 +42,11 @@ func init() {
 func swapRB32SSEWrapper(dst, src []byte) {
 	pixels := len(src) / 4
 	bulk := pixels &^ 3
+
 	if bulk > 0 {
 		swapRB32SSE(&dst[0], &src[0], bulk)
 	}
+
 	if bulk < pixels {
 		scalarSwapRB32(dst[bulk*4:], src[bulk*4:])
 	}
@@ -39,9 +56,11 @@ func swapRB32SSEWrapper(dst, src []byte) {
 func swapRB32AVX2Wrapper(dst, src []byte) {
 	pixels := len(src) / 4
 	bulk := pixels &^ 7
+
 	if bulk > 0 {
 		swapRB32AVX2(&dst[0], &src[0], bulk)
 	}
+
 	if bulk < pixels {
 		scalarSwapRB32(dst[bulk*4:], src[bulk*4:])
 	}
@@ -53,9 +72,11 @@ func swapRB32AVX2Wrapper(dst, src []byte) {
 func bgrToRGBASSEWrapper(dst, src []byte) {
 	pixels := len(src) / 3
 	safe := min(safeGroups(len(src)), pixels)
+
 	if safe > 0 {
 		bgrToRGBASSE(&dst[0], &src[0], safe)
 	}
+
 	if safe < pixels {
 		scalarBGRToRGBA(dst[safe*4:], src[safe*3:])
 	}
@@ -67,9 +88,11 @@ func bgrToRGBASSEWrapper(dst, src []byte) {
 func rgbaToBGRSSEWrapper(dst, src []byte) {
 	pixels := len(src) / 4
 	safe := min(safeGroups(len(dst)), pixels)
+
 	if safe > 0 {
 		rgbaToBGRSSE(&dst[0], &src[0], safe)
 	}
+
 	if safe < pixels {
 		scalarRGBAToBGR(dst[safe*3:], src[safe*4:])
 	}
@@ -84,5 +107,6 @@ func safeGroups(n int) int {
 	if n < 16 {
 		return 0
 	}
+
 	return 4 * ((n - 4) / 12)
 }
