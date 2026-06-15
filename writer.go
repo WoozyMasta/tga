@@ -10,6 +10,8 @@ import (
 	"image/color"
 	"image/draw"
 	"io"
+
+	"github.com/woozymasta/tga/internal/simd"
 )
 
 // EncodeOptions controls optional TGA encoding features.
@@ -446,20 +448,10 @@ func trueColorBytesPerPixel(depth int) (int, error) {
 func packNRGBARow(dst, src []byte, depth int) {
 	switch depth {
 	case 32:
-		// Bulk copy (memmove) then swap only R/B in place:
-		// this writes two bytes per pixel instead of gathering all four,
-		// which the compiler turns into much tighter code than an element-wise copy.
-		copy(dst, src)
-		for i := 0; i < len(dst); i += 4 {
-			dst[i+0], dst[i+2] = dst[i+2], dst[i+0] // RGBA -> BGRA
-		}
+		simd.SwapRB32(dst, src) // RGBA -> BGRA
 
 	case 24:
-		for si, di := 0, 0; si < len(src); si, di = si+4, di+3 {
-			dst[di+0] = src[si+2] // B
-			dst[di+1] = src[si+1] // G
-			dst[di+2] = src[si+0] // R
-		}
+		simd.RGBAToBGR(dst, src) // RGBA -> BGR
 
 	case 16:
 		for si, di := 0, 0; si < len(src); si, di = si+4, di+2 {
@@ -486,10 +478,7 @@ func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, orig
 			}
 
 			i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
-			copy(row, m.Pix[i0:i0+width*4])
-			for i := 0; i < width*4; i += 4 {
-				row[i+0], row[i+2] = row[i+2], row[i+0] // RGBA -> BGRA
-			}
+			simd.SwapRB32(row, m.Pix[i0:i0+width*4]) // RGBA -> BGRA
 
 			if _, err := w.Write(row); err != nil {
 				return err
@@ -506,14 +495,7 @@ func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, orig
 			}
 
 			i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
-			src := m.Pix[i0 : i0+width*4]
-			di := 0
-			for si := 0; si < len(src); si += 4 {
-				row[di+0] = src[si+2]
-				row[di+1] = src[si+1]
-				row[di+2] = src[si+0]
-				di += 3
-			}
+			simd.RGBAToBGR(row, m.Pix[i0:i0+width*4]) // RGBA -> BGR
 
 			if _, err := w.Write(row); err != nil {
 				return err

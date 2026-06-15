@@ -9,6 +9,8 @@ import (
 	"image"
 	"image/color"
 	"io"
+
+	"github.com/woozymasta/tga/internal/simd"
 )
 
 const (
@@ -440,37 +442,13 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
 	switch depth {
 	case 24:
-		convertRow24ToNRGBA(dst[:w*4], src[:w*3])
+		simd.BGRToRGBA(dst[:w*4], src[:w*3])
 
 	case 32:
-		convertRow32ToNRGBA(dst[:w*4], src[:w*4])
+		simd.SwapRB32(dst[:w*4], src[:w*4])
 
 	case 15, 16:
 		convertRow16ToNRGBA(dst[:w*4], src[:w*2])
-	}
-}
-
-// convertRow24ToNRGBA converts one 24-bit BGR row to 32-bit RGBA.
-func convertRow24ToNRGBA(dst []byte, src []byte) {
-	di := 0
-	for si := 0; si < len(src); si += 3 {
-		dst[di+0] = src[si+2]
-		dst[di+1] = src[si+1]
-		dst[di+2] = src[si+0]
-		dst[di+3] = 0xff
-		di += 4
-	}
-}
-
-// convertRow32ToNRGBA converts one 32-bit BGRA row to 32-bit RGBA.
-func convertRow32ToNRGBA(dst []byte, src []byte) {
-	di := 0
-	for si := 0; si < len(src); si += 4 {
-		dst[di+0] = src[si+2]
-		dst[di+1] = src[si+1]
-		dst[di+2] = src[si+0]
-		dst[di+3] = src[si+3]
-		di += 4
 	}
 }
 

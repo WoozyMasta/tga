@@ -45,6 +45,29 @@ func BenchmarkEncode_1920x1080(b *testing.B) {
 	}
 }
 
+func BenchmarkDecode_32_1920x1080(b *testing.B) {
+	src := image.NewNRGBA(image.Rect(0, 0, 1920, 1080))
+	var encoded bytes.Buffer
+	_ = EncodeWithOptions(&encoded, src, &EncodeOptions{PixelDepth: 32})
+	data := encoded.Bytes()
+	r := bytes.NewReader(data)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r.Reset(data)
+		_, _ = Decode(r)
+	}
+}
+
+func BenchmarkEncode_24_1920x1080(b *testing.B) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1920, 1080))
+	opts := &EncodeOptions{PixelDepth: 24}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = EncodeWithOptions(io.Discard, img, opts)
+	}
+}
+
 func BenchmarkDecode_RLE24_1920x1080(b *testing.B) {
 	src := image.NewNRGBA(image.Rect(0, 0, 1920, 1080))
 	for y := 0; y < 1080; y++ {

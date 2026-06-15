@@ -4,28 +4,24 @@ ALIGNER     ?= betteralign
 BENCHSTAT   ?= benchstat
 BENCH_COUNT ?= 6
 BENCH_REF   ?= bench_baseline.txt
+ASMGEN_REF  ?= ./internal/simd/asmgen
 
-.PHONY: test test-race test-short bench bench-fast bench-reset verify vet check ci \
-	fmt fmt-check lint lint-fix align align-fix tidy tidy-check download \
-	tools tools-ci tool-golangci-lint tool-betteralign tool-benchstat \
-	release-notes
+.PHONY: check ci
 
-check: verify tidy fmt vet lint-fix align-fix test
-ci: download tools-ci verify tidy-check fmt-check vet lint align test
+check: generate verify tidy fmt vet lint-fix align-fix test test-race test-pure test-race-pure
+ci: download tools-ci generate-check verify tidy-check fmt-check vet lint align test test-pure
 
-fmt:
-	gofmt -w .
+.PHONY: generate generate-check
 
-fmt-check:
-	@files=$$(gofmt -l .); \
-	if [ -n "$$files" ]; then \
-		echo "$$files" 1>&2; \
-		echo "gofmt: files need formatting" 1>&2; \
-		exit 1; \
-	fi
+generate:
+	GOWORK=off $(GO) -C $(ASMGEN_REF) run . \
+		-out ../kernels_amd64.s -stubs ../kernels_stub_amd64.go -pkg simd
+	gofmt -w internal/simd/kernels_stub_amd64.go
 
-vet:
-	$(GO) vet ./...
+generate-check: generate
+	git diff --exit-code -- internal/simd
+
+.PHONY: test test-race test-pure test-race-pure
 
 test:
 	$(GO) test ./...
@@ -33,8 +29,13 @@ test:
 test-race:
 	$(GO) test -race ./...
 
-test-short:
-	$(GO) test -short ./...
+test-pure:
+	$(GO) test -tags purego ./...
+
+test-race-pure:
+	$(GO) test -tags purego -race ./...
+
+.PHONY: bench bench-fast bench-reset
 
 bench:
 	@tmp=$$(mktemp); \
@@ -52,21 +53,42 @@ bench-fast:
 bench-reset:
 	rm -f "$(BENCH_REF)"
 
+.PHONY: download verify vet tidy tidy-check fmt fmt-check lint lint-fix align align-fix
+
+download:
+	$(GO) mod download
+	GOWORK=off $(GO) -C $(ASMGEN_REF) mod download
+
 verify:
 	$(GO) mod verify
+	GOWORK=off $(GO) -C $(ASMGEN_REF) mod verify
+
+vet:
+	$(GO) vet ./...
+	GOWORK=off $(GO) -C $(ASMGEN_REF) vet ./...
+
+tidy:
+	$(GO) mod tidy
+	GOWORK=off $(GO) -C $(ASMGEN_REF) mod tidy
 
 tidy-check:
 	@$(GO) mod tidy
-	@git diff --stat --exit-code -- go.mod go.sum || ( \
+	@GOWORK=off $(GO) -C $(ASMGEN_REF) mod tidy
+	@git diff --stat --exit-code -- go.mod go.sum internal/simd/asmgen/go.mod internal/simd/asmgen/go.sum || ( \
 		echo "go mod tidy: repository is not tidy"; \
 		exit 1; \
 	)
 
-tidy:
-	$(GO) mod tidy
+fmt:
+	gofmt -w .
 
-download:
-	$(GO) mod download
+fmt-check:
+	@files="$$(gofmt -l .)"; \
+	if [ -n "$$files" ]; then \
+		echo "$$files"; \
+		echo "gofmt: files need formatting"; \
+		exit 1; \
+	fi
 
 lint:
 	$(LINTER) run ./...
@@ -81,6 +103,8 @@ align-fix:
 	-$(ALIGNER) -apply ./...
 	$(ALIGNER) ./...
 
+.PHONY: tools tools-ci tool-golangci-lint tool-betteralign tool-benchstat
+
 tools: tool-golangci-lint tool-betteralign tool-benchstat
 tools-ci: tool-golangci-lint tool-betteralign
 
@@ -92,6 +116,8 @@ tool-betteralign:
 
 tool-benchstat:
 	$(GO) install golang.org/x/perf/cmd/benchstat@latest
+
+.PHONY: release-notes
 
 release-notes:
 	@awk '\
