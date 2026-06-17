@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
-## Unreleased
+## [1.2.0][] - 2026-06-17
 
 ### Added
 
@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning][].
 * Decoding a malformed color-mapped image no longer panics
   when the pixel data references a palette index outside the supplied color map.
 * Decoding no longer panics on a color map that declares a `0`-bit entry size.
+
+[1.2.0]: https://github.com/WoozyMasta/tga/compare/v1.1.0...v1.2.0
 
 ## [1.1.0][] - 2026-03-16
 
