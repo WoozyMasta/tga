@@ -115,6 +115,10 @@ func Decode(r io.Reader) (image.Image, error) {
 	var palette color.Palette
 	if hasCMap && cMapLen > 0 {
 		entryBytes := (int(cMapDepth) + 7) / 8
+		if entryBytes == 0 {
+			return nil, ErrUnsupported // a color-map entry size of 0 bits is invalid
+		}
+
 		rawPalette := make([]byte, cMapLen*entryBytes)
 		if _, err := io.ReadFull(br, rawPalette); err != nil {
 			return nil, err
@@ -155,6 +159,18 @@ func Decode(r io.Reader) (image.Image, error) {
 				palette[idx] = color.Gray{Y: rawPalette[offset]}
 			}
 		}
+	}
+
+	// 8-bit paletted images index the palette with a full byte (0..255).
+	// Pad the palette to 256 entries so out-of-range indices in (possibly malformed)
+	// pixel data resolve to a valid color instead of panicking on access.
+	if (imgType == typePaletted || imgType == typeRLEPaletted) && len(palette) < 256 {
+		full := make(color.Palette, 256)
+		n := copy(full, palette)
+		for i := n; i < 256; i++ {
+			full[i] = color.NRGBA{}
+		}
+		palette = full
 	}
 
 	// Bit 5 of descriptor: 0 = lower-left origin, 1 = upper-left. Go uses top-left.
