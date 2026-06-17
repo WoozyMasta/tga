@@ -548,6 +548,7 @@ func encodeNRGBARLE(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, o
 
 	width := b.Dx()
 	rowPacked := make([]byte, width*bytesPerPixel)
+	header := []byte{0} // reused across rows to avoid a per-row allocation
 
 	for rowIndex := 0; rowIndex < b.Dy(); rowIndex++ {
 		y := b.Min.Y + rowIndex
@@ -558,7 +559,7 @@ func encodeNRGBARLE(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, o
 		i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
 		packNRGBARow(rowPacked, m.Pix[i0:i0+width*4], depth)
 
-		if err := encodeRLEPackets(w, rowPacked, bytesPerPixel); err != nil {
+		if err := encodeRLEPackets(w, rowPacked, bytesPerPixel, header); err != nil {
 			return err
 		}
 	}
@@ -657,15 +658,16 @@ func encodeRGB555(r, g, b, a uint8) uint16 {
 	return alphaBit | (r5 << 10) | (g5 << 5) | b5
 }
 
-// encodeRLEPackets writes TGA RLE packets from packed pixels.
-func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
+// encodeRLEPackets writes TGA RLE packets from packed pixels
+// using a caller-provided 1-byte header scratch,
+// so per-row callers avoid allocating once per row.
+func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, header []byte) error {
 	if bytesPerPixel == 1 {
-		return encodeRLEPackets1(w, packed)
+		return encodeRLEPackets1WithScratch(w, packed, header, []byte{0})
 	}
 
 	totalPixels := len(packed) / bytesPerPixel
 	i := 0
-	header := []byte{0}
 
 	for i < totalPixels {
 		runLen := findRunLength(packed, bytesPerPixel, i, totalPixels)
@@ -722,14 +724,6 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 	}
 
 	return nil
-}
-
-// encodeRLEPackets1 writes TGA RLE packets for one-byte pixels.
-func encodeRLEPackets1(w io.Writer, packed []byte) error {
-	header := []byte{0}
-	value := []byte{0}
-
-	return encodeRLEPackets1WithScratch(w, packed, header, value)
 }
 
 // encodeRLEPackets1WithScratch writes one-byte-pixel RLE using caller scratch.
