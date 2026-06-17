@@ -2,90 +2,125 @@ package tga
 
 import (
 	"bytes"
+	"image"
 	"image/color"
 	"io"
 	"testing"
-
-	"image"
 )
 
-func BenchmarkDecode_64x64(b *testing.B) {
-	data := makeRawTGA24(64, 64, true)
-	r := bytes.NewReader(data)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		r.Reset(data)
-		_, _ = Decode(r)
-	}
+// benchPalette is the small fixed palette shared by all benchmark images.
+var benchPalette = color.Palette{
+	color.NRGBA{R: 0, G: 0, B: 0, A: 255},
+	color.NRGBA{R: 220, G: 30, B: 10, A: 255},
+	color.NRGBA{R: 30, G: 140, B: 220, A: 255},
+	color.NRGBA{R: 250, G: 250, B: 60, A: 255},
 }
 
-func BenchmarkDecode_1920x1080(b *testing.B) {
-	data := makeRawTGA24(1920, 1080, true)
-	r := bytes.NewReader(data)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		r.Reset(data)
-		_, _ = Decode(r)
-	}
-}
+// patternIndex maps (x,y) to a palette index in ~16px horizontal runs,
+// so RLE benchmarks compress realistically instead of degenerating to all-same data.
+func patternIndex(x, y int) int { return (x/16 + y/16) % len(benchPalette) }
 
-func BenchmarkEncode_64x64(b *testing.B) {
-	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = Encode(io.Discard, img)
-	}
-}
-
-func BenchmarkEncode_1920x1080(b *testing.B) {
-	img := image.NewNRGBA(image.Rect(0, 0, 1920, 1080))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = Encode(io.Discard, img)
-	}
-}
-
-func BenchmarkDecode_RLE24_1920x1080(b *testing.B) {
-	src := image.NewNRGBA(image.Rect(0, 0, 1920, 1080))
-	for y := 0; y < 1080; y++ {
-		c := color.NRGBA{R: 20, G: 30, B: 40, A: 255}
-		if y%2 == 1 {
-			c = color.NRGBA{R: 180, G: 20, B: 60, A: 255}
-		}
-		for x := 0; x < 1920; x++ {
-			src.SetNRGBA(x, y, c)
+func buildNRGBA(w, h int) image.Image {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetNRGBA(x, y, benchPalette[patternIndex(x, y)].(color.NRGBA))
 		}
 	}
+	return img
+}
 
-	var encoded bytes.Buffer
-	_ = EncodeWithOptions(&encoded, src, &EncodeOptions{PixelDepth: 24, RLE: true})
-	data := encoded.Bytes()
-	r := bytes.NewReader(data)
+func buildGray(w, h int) image.Image {
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetGray(x, y, color.Gray{Y: uint8(patternIndex(x, y) * 80)})
+		}
+	}
+	return img
+}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		r.Reset(data)
-		_, _ = Decode(r)
+func buildPaletted(w, h int) image.Image {
+	img := image.NewPaletted(image.Rect(0, 0, w, h), benchPalette)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetColorIndex(x, y, uint8(patternIndex(x, y)))
+		}
+	}
+	return img
+}
+
+var benchSizes = []struct {
+	name string
+	w, h int
+}{
+	{"64x64", 64, 64},
+	{"1920x1080", 1920, 1080},
+}
+
+var benchKinds = []struct {
+	name  string
+	depth int // true-color PixelDepth; 0 (default) for gray/paletted
+	build func(w, h int) image.Image
+}{
+	{"Gray8", 0, buildGray},
+	{"Paletted8", 0, buildPaletted},
+	{"TrueColor16", 16, buildNRGBA},
+	{"TrueColor24", 24, buildNRGBA},
+	{"TrueColor32", 32, buildNRGBA},
+}
+
+func rleLabel(rle bool) string {
+	if rle {
+		return "RLE"
+	}
+	return "Raw"
+}
+
+// BenchmarkDecode covers Decode over {size} x {kind/depth} x {RLE on/off}.
+func BenchmarkDecode(b *testing.B) {
+	for _, sz := range benchSizes {
+		for _, k := range benchKinds {
+			img := k.build(sz.w, sz.h)
+			for _, rle := range []bool{false, true} {
+				var buf bytes.Buffer
+				if err := EncodeWithOptions(&buf, img, &EncodeOptions{PixelDepth: k.depth, RLE: rle}); err != nil {
+					b.Fatalf("encode %s/%s: %v", sz.name, k.name, err)
+				}
+				data := buf.Bytes()
+
+				b.Run(sz.name+"/"+k.name+"/"+rleLabel(rle), func(b *testing.B) {
+					r := bytes.NewReader(data)
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						r.Reset(data)
+						if _, err := Decode(r); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
+		}
 	}
 }
 
-func BenchmarkEncode_PalettedRLE_1920x1080(b *testing.B) {
-	pal := color.Palette{
-		color.NRGBA{R: 0, G: 0, B: 0, A: 255},
-		color.NRGBA{R: 220, G: 30, B: 10, A: 255},
-		color.NRGBA{R: 30, G: 140, B: 220, A: 255},
-		color.NRGBA{R: 250, G: 250, B: 60, A: 255},
-	}
-	img := image.NewPaletted(image.Rect(0, 0, 1920, 1080), pal)
-	for y := 0; y < 1080; y++ {
-		for x := 0; x < 1920; x++ {
-			img.SetColorIndex(x, y, uint8((x/16+y/16)%len(pal)))
-		}
-	}
+// BenchmarkEncode covers Encode over {size} x {kind/depth} x {RLE on/off}.
+func BenchmarkEncode(b *testing.B) {
+	for _, sz := range benchSizes {
+		for _, k := range benchKinds {
+			img := k.build(sz.w, sz.h)
+			for _, rle := range []bool{false, true} {
+				opts := &EncodeOptions{PixelDepth: k.depth, RLE: rle}
 
-	opts := &EncodeOptions{RLE: true}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = EncodeWithOptions(io.Discard, img, opts)
+				b.Run(sz.name+"/"+k.name+"/"+rleLabel(rle), func(b *testing.B) {
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if err := EncodeWithOptions(io.Discard, img, opts); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
+		}
 	}
 }

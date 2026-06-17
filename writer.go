@@ -10,6 +10,8 @@ import (
 	"image/color"
 	"image/draw"
 	"io"
+
+	"github.com/woozymasta/tga/internal/simd"
 )
 
 // EncodeOptions controls optional TGA encoding features.
@@ -425,7 +427,44 @@ func encodeGrayRLE(w io.Writer, m *image.Gray, b image.Rectangle, originBottom b
 	return nil
 }
 
+// trueColorBytesPerPixel returns packed bytes per pixel for a true-color depth.
+func trueColorBytesPerPixel(depth int) (int, error) {
+	switch depth {
+	case 16:
+		return 2, nil
+	case 24:
+		return 3, nil
+	case 32:
+		return 4, nil
+	default:
+		return 0, ErrUnsupported
+	}
+}
+
+// packNRGBARow converts one NRGBA row (RGBA bytes, len width*4)
+// into packed TGA true-color bytes: BGRA (32), BGR (24) or little-endian RGB555 (16).
+// len(dst) must equal width*bytesPerPixel for the given depth.
+// This is the single point where pixel layout conversion happens for true-color encoding.
+func packNRGBARow(dst, src []byte, depth int) {
+	switch depth {
+	case 32:
+		simd.SwapRB32(dst, src) // RGBA -> BGRA
+
+	case 24:
+		simd.RGBAToBGR(dst, src) // RGBA -> BGR
+
+	case 16:
+		for si, di := 0, 0; si < len(src); si, di = si+4, di+2 {
+			v := encodeRGB555(src[si+0], src[si+1], src[si+2], src[si+3])
+			binary.LittleEndian.PutUint16(dst[di:di+2], v)
+		}
+	}
+}
+
 // encodeNRGBA writes true-color pixel data in configured row order.
+// The depth switch is hoisted out of the row loop and the per-row conversion is
+// kept inline (no per-row call) so the compiler can tightly optimize the hot path;
+// the RLE path shares packNRGBARow instead.
 func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, originBottom bool) error {
 	width := b.Dx()
 	switch depth {
@@ -439,10 +478,7 @@ func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, orig
 			}
 
 			i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
-			copy(row, m.Pix[i0:i0+width*4])
-			for i := 0; i < width*4; i += 4 {
-				row[i+0], row[i+2] = row[i+2], row[i+0] // RGBA -> BGRA
-			}
+			simd.SwapRB32(row, m.Pix[i0:i0+width*4]) // RGBA -> BGRA
 
 			if _, err := w.Write(row); err != nil {
 				return err
@@ -459,14 +495,7 @@ func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, orig
 			}
 
 			i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
-			src := m.Pix[i0 : i0+width*4]
-			di := 0
-			for si := 0; si < len(src); si += 4 {
-				row[di+0] = src[si+2]
-				row[di+1] = src[si+1]
-				row[di+2] = src[si+0]
-				di += 3
-			}
+			simd.RGBAToBGR(row, m.Pix[i0:i0+width*4]) // RGBA -> BGR
 
 			if _, err := w.Write(row); err != nil {
 				return err
@@ -509,33 +538,17 @@ func encodeNRGBA(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, orig
 }
 
 // encodeNRGBARLE writes true-color pixel data using TGA RLE packets.
+// Rows are packed and RLE-encoded one at a time, so packets never cross scan
+// lines (TGA 2.0 friendly) and no whole-image scratch buffer is allocated.
 func encodeNRGBARLE(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, originBottom bool) error {
-	packed, bytesPerPixel, err := packNRGBAPixels(m, b, depth, originBottom)
+	bytesPerPixel, err := trueColorBytesPerPixel(depth)
 	if err != nil {
 		return err
 	}
 
-	return encodeRLEPackets(w, packed, bytesPerPixel)
-}
-
-// packNRGBAPixels converts NRGBA rows to contiguous true-color bytes.
-func packNRGBAPixels(m *image.NRGBA, b image.Rectangle, depth int, originBottom bool) ([]byte, int, error) {
 	width := b.Dx()
-	height := b.Dy()
-	var bytesPerPixel int
-	switch depth {
-	case 16:
-		bytesPerPixel = 2
-	case 24:
-		bytesPerPixel = 3
-	case 32:
-		bytesPerPixel = 4
-	default:
-		return nil, 0, ErrUnsupported
-	}
-
-	packed := make([]byte, width*height*bytesPerPixel)
-	dst := 0
+	rowPacked := make([]byte, width*bytesPerPixel)
+	header := []byte{0} // reused across rows to avoid a per-row allocation
 
 	for rowIndex := 0; rowIndex < b.Dy(); rowIndex++ {
 		y := b.Min.Y + rowIndex
@@ -543,38 +556,15 @@ func packNRGBAPixels(m *image.NRGBA, b image.Rectangle, depth int, originBottom 
 			y = b.Max.Y - 1 - rowIndex
 		}
 
-		srcOffset := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
-		row := m.Pix[srcOffset : srcOffset+width*4]
+		i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
+		packNRGBARow(rowPacked, m.Pix[i0:i0+width*4], depth)
 
-		for i := 0; i < len(row); i += 4 {
-			switch depth {
-			case 16:
-				v := encodeRGB555(
-					row[i+0],
-					row[i+1],
-					row[i+2],
-					row[i+3],
-				)
-				binary.LittleEndian.PutUint16(packed[dst:dst+2], v)
-				dst += 2
-
-			case 24:
-				packed[dst+0] = row[i+2] // B
-				packed[dst+1] = row[i+1] // G
-				packed[dst+2] = row[i+0] // R
-				dst += 3
-
-			case 32:
-				packed[dst+0] = row[i+2] // B
-				packed[dst+1] = row[i+1] // G
-				packed[dst+2] = row[i+0] // R
-				packed[dst+3] = row[i+3] // A
-				dst += 4
-			}
+		if err := encodeRLEPackets(w, rowPacked, bytesPerPixel, header); err != nil {
+			return err
 		}
 	}
 
-	return packed, bytesPerPixel, nil
+	return nil
 }
 
 // encodePaletted writes uncompressed 8-bit paletted pixel data.
@@ -668,15 +658,16 @@ func encodeRGB555(r, g, b, a uint8) uint16 {
 	return alphaBit | (r5 << 10) | (g5 << 5) | b5
 }
 
-// encodeRLEPackets writes TGA RLE packets from packed pixels.
-func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
+// encodeRLEPackets writes TGA RLE packets from packed pixels
+// using a caller-provided 1-byte header scratch,
+// so per-row callers avoid allocating once per row.
+func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, header []byte) error {
 	if bytesPerPixel == 1 {
-		return encodeRLEPackets1(w, packed)
+		return encodeRLEPackets1WithScratch(w, packed, header, []byte{0})
 	}
 
 	totalPixels := len(packed) / bytesPerPixel
 	i := 0
-	header := []byte{0}
 
 	for i < totalPixels {
 		runLen := findRunLength(packed, bytesPerPixel, i, totalPixels)
@@ -733,14 +724,6 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int) error {
 	}
 
 	return nil
-}
-
-// encodeRLEPackets1 writes TGA RLE packets for one-byte pixels.
-func encodeRLEPackets1(w io.Writer, packed []byte) error {
-	header := []byte{0}
-	value := []byte{0}
-
-	return encodeRLEPackets1WithScratch(w, packed, header, value)
 }
 
 // encodeRLEPackets1WithScratch writes one-byte-pixel RLE using caller scratch.

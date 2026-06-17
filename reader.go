@@ -9,6 +9,8 @@ import (
 	"image"
 	"image/color"
 	"io"
+
+	"github.com/woozymasta/tga/internal/simd"
 )
 
 const (
@@ -113,6 +115,10 @@ func Decode(r io.Reader) (image.Image, error) {
 	var palette color.Palette
 	if hasCMap && cMapLen > 0 {
 		entryBytes := (int(cMapDepth) + 7) / 8
+		if entryBytes == 0 {
+			return nil, ErrUnsupported // a color-map entry size of 0 bits is invalid
+		}
+
 		rawPalette := make([]byte, cMapLen*entryBytes)
 		if _, err := io.ReadFull(br, rawPalette); err != nil {
 			return nil, err
@@ -153,6 +159,18 @@ func Decode(r io.Reader) (image.Image, error) {
 				palette[idx] = color.Gray{Y: rawPalette[offset]}
 			}
 		}
+	}
+
+	// 8-bit paletted images index the palette with a full byte (0..255).
+	// Pad the palette to 256 entries so out-of-range indices in (possibly malformed)
+	// pixel data resolve to a valid color instead of panicking on access.
+	if (imgType == typePaletted || imgType == typeRLEPaletted) && len(palette) < 256 {
+		full := make(color.Palette, 256)
+		n := copy(full, palette)
+		for i := n; i < 256; i++ {
+			full[i] = color.NRGBA{}
+		}
+		palette = full
 	}
 
 	// Bit 5 of descriptor: 0 = lower-left origin, 1 = upper-left. Go uses top-left.
@@ -329,11 +347,10 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 			}
 
 			if isGray {
-				val := pixelBuf[0]
-				for range count {
-					outPix[outIdx] = val
-					outIdx++
-				}
+				dst := outPix[outIdx : outIdx+count]
+				dst[0] = pixelBuf[0]
+				replicatePattern(dst, 1)
+				outIdx += count
 			} else {
 				var rv, gv, bv, av uint8
 
@@ -348,13 +365,11 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 					rv, gv, bv, av = c.R, c.G, c.B, c.A
 				}
 
-				for range count {
-					outPix[outIdx+0] = rv
-					outPix[outIdx+1] = gv
-					outPix[outIdx+2] = bv
-					outPix[outIdx+3] = av
-					outIdx += 4
-				}
+				// Write one pixel, then replicate it across the run via memmove.
+				dst := outPix[outIdx : outIdx+count*4]
+				dst[0], dst[1], dst[2], dst[3] = rv, gv, bv, av
+				replicatePattern(dst, 4)
+				outIdx += count * 4
 			}
 		} else {
 			if isGray {
@@ -418,10 +433,10 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 			if err != nil {
 				return nil, err
 			}
-			for range count {
-				outPix[outIdx] = val
-				outIdx++
-			}
+			dst := outPix[outIdx : outIdx+count]
+			dst[0] = val
+			replicatePattern(dst, 1)
+			outIdx += count
 		} else {
 			if _, err := io.ReadFull(r, outPix[outIdx:outIdx+count]); err != nil {
 				return nil, err
@@ -443,37 +458,13 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
 	switch depth {
 	case 24:
-		convertRow24ToNRGBA(dst[:w*4], src[:w*3])
+		simd.BGRToRGBA(dst[:w*4], src[:w*3])
 
 	case 32:
-		convertRow32ToNRGBA(dst[:w*4], src[:w*4])
+		simd.SwapRB32(dst[:w*4], src[:w*4])
 
 	case 15, 16:
 		convertRow16ToNRGBA(dst[:w*4], src[:w*2])
-	}
-}
-
-// convertRow24ToNRGBA converts one 24-bit BGR row to 32-bit RGBA.
-func convertRow24ToNRGBA(dst []byte, src []byte) {
-	di := 0
-	for si := 0; si < len(src); si += 3 {
-		dst[di+0] = src[si+2]
-		dst[di+1] = src[si+1]
-		dst[di+2] = src[si+0]
-		dst[di+3] = 0xff
-		di += 4
-	}
-}
-
-// convertRow32ToNRGBA converts one 32-bit BGRA row to 32-bit RGBA.
-func convertRow32ToNRGBA(dst []byte, src []byte) {
-	di := 0
-	for si := 0; si < len(src); si += 4 {
-		dst[di+0] = src[si+2]
-		dst[di+1] = src[si+1]
-		dst[di+2] = src[si+0]
-		dst[di+3] = src[si+3]
-		di += 4
 	}
 }
 
@@ -510,6 +501,16 @@ func decodeRGB555(v uint16) color.NRGBA {
 	b = (b << 3) | (b >> 2)
 
 	return color.NRGBA{R: r, G: g, B: b, A: 0xff}
+}
+
+// replicatePattern fills dst with repeated copies of its first unit bytes.
+// dst[:unit] must already hold the pattern and len(dst) must be a multiple of unit.
+// The filled region grows exponentially via copy (runtime.memmove),
+// which is far faster than storing the pattern element-by-element.
+func replicatePattern(dst []byte, unit int) {
+	for n := unit; n < len(dst); {
+		n += copy(dst[n:], dst[:n])
+	}
 }
 
 // flipImageVertically flips the image in place along the horizontal axis.
