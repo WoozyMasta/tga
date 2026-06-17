@@ -30,7 +30,10 @@ and this project adheres to [Semantic Versioning][].
   true-color decode is ~40-65% faster,
   true-color encode ~75-87% faster,
   and RLE true-color decode ~55% faster (~60% faster overall, geomean),
-  with unchanged memory use.
+  without increasing memory use.
+* True-color RLE encoding no longer allocates a scratch buffer per scan line,
+  cutting allocations from roughly one-per-row to a small constant
+  (e.g. 1082 -> 3 allocs/op at 1920x1080).
 * True-color RLE encoding no longer emits packets that span scan lines,
   which is friendlier to strict TGA 2.0 readers;
   the decoded image is identical.
