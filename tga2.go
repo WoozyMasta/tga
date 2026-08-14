@@ -86,7 +86,11 @@ type Info struct {
 // DecodeWithMetadata decodes a seekable TGA stream and reads its TGA 2.0 metadata.
 // AttributesType values 0 and 1 produce opaque pixels, 2 and 3 preserve straight
 // alpha as *image.NRGBA, and 4 returns premultiplied pixels as *image.RGBA.
-func DecodeWithMetadata(r io.ReadSeeker) (image.Image, Info, error) {
+func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error) {
+	defer func() {
+		err = wrapTruncated(err)
+	}()
+
 	// Read the ID first so metadata decoding can reuse the regular streaming decoder.
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
 		return nil, Info{}, err
@@ -105,11 +109,11 @@ func DecodeWithMetadata(r io.ReadSeeker) (image.Image, Info, error) {
 	}
 
 	// Decode validates and decodes pixels using the same path as Decode(io.Reader).
-	img, err := Decode(r)
+	img, err = Decode(r)
 	if err != nil {
 		return nil, Info{}, err
 	}
-	info := Info{ImageID: id}
+	info = Info{ImageID: id}
 	end, err := r.Seek(0, io.SeekEnd)
 	if err != nil || end < tga2FooterSize {
 		return img, info, err

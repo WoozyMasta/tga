@@ -4,7 +4,11 @@
 
 package tga
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"io"
+)
 
 // Sentinel errors for decode/encode operations.
 // Use errors.Is to check for them in callers.
@@ -21,6 +25,9 @@ var (
 	// ErrHeaderTooShort is returned when the TGA header is too short.
 	ErrHeaderTooShort = errors.New("tga: header too short")
 
+	// ErrTruncated is returned when a valid header is followed by incomplete data.
+	ErrTruncated = errors.New("tga: truncated input")
+
 	// ErrPaletteIndex is returned when an indexed pixel is outside the declared color map.
 	ErrPaletteIndex = errors.New("tga: palette index out of range")
 
@@ -30,3 +37,12 @@ var (
 	// ErrMetadata is returned when TGA 2.0 metadata is invalid.
 	ErrMetadata = errors.New("tga: invalid metadata")
 )
+
+// wrapTruncated preserves the underlying I/O error while adding a stable TGA category.
+func wrapTruncated(err error) error {
+	if err == nil || (!errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)) {
+		return err
+	}
+
+	return fmt.Errorf("%w: %w", ErrTruncated, err)
+}

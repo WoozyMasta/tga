@@ -102,7 +102,11 @@ func DecodeWithOptions(r io.Reader, opts DecodeOptions) (image.Image, error) {
 	return decode(r, opts)
 }
 
-func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
+func decode(r io.Reader, opts DecodeOptions) (img image.Image, err error) {
+	defer func() {
+		err = wrapTruncated(err)
+	}()
+
 	br, ok := r.(*bufio.Reader)
 	if !ok {
 		br = bufio.NewReader(r)

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"io"
 	"testing"
 )
 
@@ -141,9 +140,9 @@ func TestConformanceMalformedMatrix(t *testing.T) {
 		want error
 	}{
 		{name: "truncated_header", data: valid[:headerSize-1], want: ErrHeaderTooShort},
-		{name: "truncated_raw", data: valid[:len(valid)-1], want: io.ErrUnexpectedEOF},
-		{name: "truncated_rle", data: validRLE[:len(validRLE)-1], want: io.ErrUnexpectedEOF},
-		{name: "truncated_palette", data: validPalette[:len(validPalette)-1], want: io.ErrUnexpectedEOF},
+		{name: "truncated_raw", data: valid[:len(valid)-1], want: ErrTruncated},
+		{name: "truncated_rle", data: validRLE[:len(validRLE)-1], want: ErrTruncated},
+		{name: "truncated_palette", data: validPalette[:len(validPalette)-1], want: ErrTruncated},
 		{
 			name: "invalid_palette_index",
 			data: append(append([]byte(nil), validPalette[:24]...), 9, 2, 2, 3),
