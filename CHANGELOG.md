@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Encoder depth options are now validated only for applicable image modes;
+  irrelevant `PixelDepth` and `ColorMapDepth` values are ignored.
 * TGA 2.0 metadata is validated before encoding; invalid fixed-width fields,
   timestamps, durations, gamma values, thumbnails, and offsets are rejected.
 * `DecodeWithMetadata` now applies TGA 2.0 alpha attribute semantics

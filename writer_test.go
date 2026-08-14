@@ -423,6 +423,42 @@ func TestEncodeWithOptions_UnsupportedDepth(t *testing.T) {
 	}
 }
 
+func TestEncodeWithOptions_IgnoresIrrelevantDepthOptions(t *testing.T) {
+	tests := []struct {
+		name string
+		img  image.Image
+		opts EncodeOptions
+	}{
+		{
+			name: "gray ignores pixel and color map depth",
+			img:  image.NewGray(image.Rect(0, 0, 1, 1)),
+			opts: EncodeOptions{PixelDepth: 12, ColorMapDepth: 15},
+		},
+		{
+			name: "paletted ignores pixel depth",
+			img:  image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black}),
+			opts: EncodeOptions{PixelDepth: 12, ColorMapDepth: 24},
+		},
+		{
+			name: "true color ignores color map depth",
+			img:  image.NewNRGBA(image.Rect(0, 0, 1, 1)),
+			opts: EncodeOptions{PixelDepth: 24, ColorMapDepth: 15},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := EncodeWithOptions(&buf, test.img, &test.opts); err != nil {
+				t.Fatalf("EncodeWithOptions: %v", err)
+			}
+			if _, err := Decode(bytes.NewReader(buf.Bytes())); err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+		})
+	}
+}
+
 func TestEncodeWithOptions_ImageID(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
 	imageID := []byte("example-id")

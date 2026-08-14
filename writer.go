@@ -52,6 +52,8 @@ func Encode(w io.Writer, m image.Image) error {
 // and true-color images in 16/24/32-bit depth (default 32-bit).
 // Other image types are converted to NRGBA. Origin is top-left (descriptor bit 5 set).
 // TGA 2.0 footer/extension areas are written when metadata options are enabled.
+// PixelDepth is ignored for grayscale and paletted images;
+// ColorMapDepth is ignored for grayscale and true-color images.
 func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 	settings := effectiveEncodeOptions(opts)
 	if err := validateMetadata(settings.Metadata); err != nil {
@@ -99,11 +101,6 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 	}
 	binary.LittleEndian.PutUint16(header[12:14], mw16)
 	binary.LittleEndian.PutUint16(header[14:16], mh16)
-
-	trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
-	if err != nil {
-		return err
-	}
 
 	switch src := m.(type) {
 	case *image.Gray:
@@ -197,6 +194,11 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		return writeTGA2TailIfNeeded(cw, meta)
 
 	case *image.NRGBA:
+		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
+		if err != nil {
+			return err
+		}
+
 		if settings.RLE {
 			header[2] = typeRLETrueColor
 		} else {
@@ -238,6 +240,11 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		return writeTGA2TailIfNeeded(cw, meta)
 
 	default:
+		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
+		if err != nil {
+			return err
+		}
+
 		// Convert arbitrary image.Image once to a canonical straight-alpha
 		// representation before choosing the true-color packing path.
 		if settings.RLE {
