@@ -27,6 +27,22 @@ DecodeConfig (dimensions without full decode):
 	cfg, err := tga.DecodeConfig(f)
 	// cfg.Width, cfg.Height
 
+Decode with resource limits:
+
+	f, _ := os.Open("untrusted.tga")
+	defer f.Close()
+	img, err := tga.DecodeWithOptions(f, tga.DecodeOptions{
+		MaxPixels:        16 * 1024 * 1024,
+		MaxDecodedBytes:  64 * 1024 * 1024,
+	})
+
+Decode TGA 2.0 metadata (the input must be seekable):
+
+	f, _ := os.Open("image-with-metadata.tga")
+	defer f.Close()
+	img, info, err := tga.DecodeWithMetadata(f)
+	// info.HasFooter and info.Metadata describe the optional TGA 2.0 areas.
+
 Encode example:
 
 	out, _ := os.Create("out.tga")

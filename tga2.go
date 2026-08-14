@@ -86,6 +86,7 @@ type Info struct {
 // DecodeWithMetadata decodes a seekable TGA stream and reads its TGA 2.0 metadata.
 // AttributesType values 0 and 1 produce opaque pixels, 2 and 3 preserve straight
 // alpha as *image.NRGBA, and 4 returns premultiplied pixels as *image.RGBA.
+// The reader must implement io.ReadSeeker and is not closed by this function.
 func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error) {
 	defer func() {
 		err = wrapTruncated(err)

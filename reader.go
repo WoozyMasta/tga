@@ -64,7 +64,8 @@ func RegisterFormat() {
 	image.RegisterFormat("tga", "", Decode, DecodeConfig)
 }
 
-// DecodeConfig returns the image configuration without decoding pixel data.
+// DecodeConfig returns the image configuration after consuming only the header
+// and color-map data required to validate it. It does not decode image pixels.
 func DecodeConfig(r io.Reader) (image.Config, error) {
 	header, err := readHeader(r)
 	if err != nil {
@@ -98,6 +99,7 @@ func Decode(r io.Reader) (image.Image, error) {
 }
 
 // DecodeWithOptions reads a TGA image from r subject to opts resource limits.
+// A zero-value DecodeOptions leaves both limits disabled. Decode does not close r.
 func DecodeWithOptions(r io.Reader, opts DecodeOptions) (image.Image, error) {
 	return decode(r, opts)
 }

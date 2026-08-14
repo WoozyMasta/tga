@@ -25,6 +25,15 @@ cfg, err := tga.DecodeConfig(r)
 
 // To use image.Decode with TGA: import _ "github.com/woozymasta/tga/register"
 
+// Decode with resource limits for untrusted input.
+img, err := tga.DecodeWithOptions(r, tga.DecodeOptions{
+  MaxPixels:       16 * 1024 * 1024,
+  MaxDecodedBytes: 64 * 1024 * 1024,
+})
+
+// Decode TGA 2.0 metadata from a seekable reader.
+img, info, err := tga.DecodeWithMetadata(readSeeker)
+
 // Encode
 err := tga.Encode(w, img)
 
