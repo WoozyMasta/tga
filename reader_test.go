@@ -148,6 +148,95 @@ func TestDecode_Synthetic24Bit(t *testing.T) {
 	}
 }
 
+func TestDecode_Origins(t *testing.T) {
+	want := [][2]color.NRGBA{
+		{{R: 255, A: 255}, {G: 255, A: 255}},
+		{{B: 255, A: 255}, {R: 255, G: 255, B: 255, A: 255}},
+	}
+
+	for _, tt := range []struct {
+		name       string
+		descriptor uint8
+		rle        bool
+	}{
+		{name: "bottom_left_raw"},
+		{name: "bottom_right_raw", descriptor: maskOriginRight},
+		{name: "top_left_raw", descriptor: maskOriginTop},
+		{name: "top_right_raw", descriptor: maskOriginTop | maskOriginRight},
+		{name: "bottom_left_rle", rle: true},
+		{name: "bottom_right_rle", descriptor: maskOriginRight, rle: true},
+		{name: "top_left_rle", descriptor: maskOriginTop, rle: true},
+		{name: "top_right_rle", descriptor: maskOriginTop | maskOriginRight, rle: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			decoded, err := Decode(bytes.NewReader(makeOriginTGA24(tt.descriptor, tt.rle, want)))
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+
+			got := decoded.(*image.NRGBA)
+			for y := range 2 {
+				for x := range 2 {
+					if actual := got.NRGBAAt(x, y); actual != want[y][x] {
+						t.Fatalf("pixel (%d,%d) = %+v, want %+v", x, y, actual, want[y][x])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDecode_InterleavedImageUnsupported(t *testing.T) {
+	data := makeRawTGA24(1, 1, true)
+	data[17] |= 0x40
+
+	_, configErr := DecodeConfig(bytes.NewReader(data))
+	if !errors.Is(configErr, ErrUnsupported) {
+		t.Fatalf("DecodeConfig error = %v, want ErrUnsupported", configErr)
+	}
+
+	_, decodeErr := Decode(bytes.NewReader(data))
+	if !errors.Is(decodeErr, ErrUnsupported) {
+		t.Fatalf("Decode error = %v, want ErrUnsupported", decodeErr)
+	}
+}
+
+func makeOriginTGA24(descriptor uint8, rle bool, pixels [][2]color.NRGBA) []byte {
+	imageType := byte(typeTrueColor)
+	if rle {
+		imageType = typeRLETrueColor
+	}
+	header := []byte{
+		0, 0, imageType,
+		0, 0, 0, 0, 0,
+		0, 0, 0, 0,
+		2, 0, 2, 0,
+		24, descriptor,
+	}
+
+	payload := make([]byte, 0, 12)
+	for inputY := range 2 {
+		y := inputY
+		if descriptor&maskOriginTop == 0 {
+			y = 1 - inputY
+		}
+		for inputX := range 2 {
+			x := inputX
+			if descriptor&maskOriginRight != 0 {
+				x = 1 - inputX
+			}
+			c := pixels[y][x]
+			payload = append(payload, c.B, c.G, c.R)
+		}
+	}
+
+	if rle {
+		payload = append([]byte{0x03}, payload...)
+	}
+
+	return append(header, payload...)
+}
+
 func TestDecode_HeaderTooShort(t *testing.T) {
 	_, err := Decode(bytes.NewReader([]byte{0, 0, 0}))
 	if err == nil {

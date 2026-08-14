@@ -23,7 +23,9 @@ const (
 	typeRLETrueColor = 10 // RLE true-color image.
 	typeRLEGrayscale = 11 // RLE grayscale image.
 
-	maskOriginTop = 0x20 // Bit 5 of image descriptor: 0 = bottom-left, 1 = top-left origin.
+	maskOriginTop   = 0x20 // Bit 5 of image descriptor: 0 = bottom-left, 1 = top-left origin.
+	maskOriginRight = 0x10 // Bit 4 of image descriptor: 0 = left, 1 = right origin.
+	maskInterleave  = 0xc0 // Bits 6-7 of image descriptor: interleave mode.
 )
 
 // RegisterFormat registers the TGA format with image.Decode and image.DecodeConfig.
@@ -134,8 +136,9 @@ func Decode(r io.Reader) (image.Image, error) {
 		palette = full
 	}
 
-	// Bit 5 of descriptor: 0 = lower-left origin, 1 = upper-left. Go uses top-left.
+	// Go uses a top-left origin.
 	flipY := (header.descriptor & maskOriginTop) == 0
+	flipX := header.descriptor&maskOriginRight != 0
 
 	switch header.imageType {
 	case typeTrueColor, typeGrayscale:
@@ -145,6 +148,7 @@ func Decode(r io.Reader) (image.Image, error) {
 			header.height,
 			header.pixelDepth,
 			header.hasAlpha,
+			flipX,
 			flipY,
 		)
 
@@ -155,6 +159,7 @@ func Decode(r io.Reader) (image.Image, error) {
 			header.height,
 			header.pixelDepth,
 			header.hasAlpha,
+			flipX,
 			flipY,
 		)
 
@@ -164,6 +169,7 @@ func Decode(r io.Reader) (image.Image, error) {
 			header.width,
 			header.height,
 			header.pixelDepth,
+			flipX,
 			flipY,
 			palette,
 		)
@@ -174,6 +180,7 @@ func Decode(r io.Reader) (image.Image, error) {
 			header.width,
 			header.height,
 			header.pixelDepth,
+			flipX,
 			flipY,
 			palette,
 		)
@@ -242,6 +249,9 @@ func parseHeader(raw [headerSize]byte) (parsedHeader, error) {
 	if header.hasColorMap && header.colorMapDepth == 0 {
 		return parsedHeader{}, ErrUnsupported
 	}
+	if header.descriptor&maskInterleave != 0 {
+		return parsedHeader{}, ErrUnsupported
+	}
 
 	header.hasAlpha = header.pixelDepth == 16 && header.descriptor&0x0f == 1
 	return header, nil
@@ -292,7 +302,7 @@ func isTrueColorDepth(pixelDepth int) bool {
 }
 
 // decodeUncompressed reads uncompressed true-color or grayscale image data.
-func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipY bool) (image.Image, error) {
+func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (image.Image, error) {
 	bytesPerPixel := (depth + 7) / 8
 	rowSize := w * bytesPerPixel
 
@@ -315,6 +325,10 @@ func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipY bool) (ima
 			copy(gray.Pix[destOffset:destOffset+w], rowBuf)
 		}
 
+		if flipX {
+			flipImageHorizontally(gray, w, h)
+		}
+
 		return gray, nil
 	}
 
@@ -335,11 +349,15 @@ func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipY bool) (ima
 		convertRowToNRGBA(nrgba.Pix[destOffset:destOffset+w*4], rowBuf, w, depth, hasAlpha)
 	}
 
+	if flipX {
+		flipImageHorizontally(nrgba, w, h)
+	}
+
 	return nrgba, nil
 }
 
 // decodeUncompressedPaletted reads uncompressed color-mapped image data.
-func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipY bool, pal color.Palette) (image.Image, error) {
+func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool, pal color.Palette) (image.Image, error) {
 	if depth != 8 {
 		return nil, ErrUnsupported
 	}
@@ -361,12 +379,16 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipY bool, pal co
 		copy(img.Pix[destOffset:], rowBuf)
 	}
 
+	if flipX {
+		flipImageHorizontally(img, w, h)
+	}
+
 	return img, nil
 }
 
 // decodeRLE decodes RLE-compressed true-color or grayscale data.
 // RLE packets may cross scan lines; we decode linearly then flip if needed.
-func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipY bool) (image.Image, error) {
+func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (image.Image, error) {
 	bytesPerPixel := (depth + 7) / 8
 	totalPixels := w * h
 
@@ -464,12 +486,15 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipY bool) (image.Im
 	if flipY {
 		flipImageVertically(img, w, h)
 	}
+	if flipX {
+		flipImageHorizontally(img, w, h)
+	}
 
 	return img, nil
 }
 
 // decodeRLEPaletted decodes RLE-compressed color-mapped image data.
-func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.Palette) (image.Image, error) {
+func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipX, flipY bool, pal color.Palette) (image.Image, error) {
 	if depth != 8 {
 		return nil, ErrUnsupported
 	}
@@ -515,6 +540,9 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 
 	if flipY {
 		flipImageVertically(img, w, h)
+	}
+	if flipX {
+		flipImageHorizontally(img, w, h)
 	}
 
 	return img, nil
@@ -624,5 +652,43 @@ func flipImageVertically(img image.Image, _, h int) {
 		copy(rowBuf, pix[y1:y1+stride])
 		copy(pix[y1:y1+stride], pix[y2:y2+stride])
 		copy(pix[y2:y2+stride], rowBuf)
+	}
+}
+
+// flipImageHorizontally flips the image in place along the vertical axis.
+func flipImageHorizontally(img image.Image, w, h int) {
+	var pix []uint8
+	var stride int
+	var pixelSize int
+
+	switch m := img.(type) {
+	case *image.NRGBA:
+		pix = m.Pix
+		stride = m.Stride
+		pixelSize = 4
+
+	case *image.Gray:
+		pix = m.Pix
+		stride = m.Stride
+		pixelSize = 1
+
+	case *image.Paletted:
+		pix = m.Pix
+		stride = m.Stride
+		pixelSize = 1
+
+	default:
+		return
+	}
+
+	for y := range h {
+		row := pix[y*stride : y*stride+w*pixelSize]
+		for x := 0; x < w/2; x++ {
+			left := x * pixelSize
+			right := (w - 1 - x) * pixelSize
+			for i := range pixelSize {
+				row[left+i], row[right+i] = row[right+i], row[left+i]
+			}
+		}
 	}
 }

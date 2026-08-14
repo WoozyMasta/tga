@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning][].
   15-bit RGB555 remains opaque.
 * `Decode` and `DecodeConfig` now share header parsing and validation,
   including consistent errors for truncated and malformed headers.
+* Decoder now handles all four TGA image origins
+  and rejects unsupported interleaved image data.
 
 ## [1.2.0][] - 2026-06-17
 
