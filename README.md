@@ -9,6 +9,14 @@ Go package for decoding and encoding TGA (Truevision TARGA) images.
 * TGA 2.0 write support: footer, extension/developer areas, and metadata fields.
 * Encode options: `PixelDepth`, `ColorMapDepth`, `OriginBottom`, `ImageID`.
 
+Decode output types are specialized by format:
+
+* `*image.Gray` for Gray8,
+* `*image.Paletted` for indexed images,
+* `*image.NRGBA` for true-color and Gray16.
+
+TGA 2.0 premultiplied alpha metadata returns `*image.RGBA`.
+
 > [!NOTE]  
 > TGA has no stable magic bytes, so global registration via
 > `image.RegisterFormat` can conflict with other decoders.

@@ -8,6 +8,11 @@ Package tga implements decoding and encoding of TGA (Truevision TARGA) image fil
 Supported image types: uncompressed and RLE-compressed true color (2, 10),
 grayscale (3, 11), and color-mapped (1, 9). Bit depths: 8, 15, 16, 24, 32.
 
+Decode returns `*image.Gray` for 8-bit grayscale,
+`*image.Paletted` for color-mapped images,
+and `*image.NRGBA` for true-color and 16-bit grayscale images.
+TGA 2.0 metadata with premultiplied alpha returns `*image.RGBA` from DecodeWithMetadata.
+
 Registration with image.Decode is not done by default (TGA has no magic bytes and
 can conflict with other formats). To enable image.Decode for TGA, either call
 tga.RegisterFormat() once or blank-import the register subpackage:
