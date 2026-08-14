@@ -550,6 +550,67 @@ func TestEncodeWithOptions_MetadataAttributeType(t *testing.T) {
 	}
 }
 
+func TestEncodeWithOptions_DerivesAlphaMetadataFromOutput(t *testing.T) {
+	tests := []struct {
+		name          string
+		img           image.Image
+		opts          EncodeOptions
+		wantAttr      byte
+		wantAlphaBits byte
+	}{
+		{name: "nrgba 32-bit", img: image.NewNRGBA(image.Rect(0, 0, 1, 1)), opts: EncodeOptions{Metadata: &TGA2Metadata{}}, wantAttr: 3, wantAlphaBits: 8},
+		{name: "nrgba 16-bit", img: image.NewNRGBA(image.Rect(0, 0, 1, 1)), opts: EncodeOptions{PixelDepth: 16, Metadata: &TGA2Metadata{}}, wantAttr: 3, wantAlphaBits: 1},
+		{name: "nrgba 24-bit", img: image.NewNRGBA(image.Rect(0, 0, 1, 1)), opts: EncodeOptions{PixelDepth: 24, Metadata: &TGA2Metadata{}}, wantAttr: 0, wantAlphaBits: 0},
+		{name: "rgba generic", img: image.NewRGBA(image.Rect(0, 0, 1, 1)), opts: EncodeOptions{Metadata: &TGA2Metadata{}}, wantAttr: 3, wantAlphaBits: 8},
+		{name: "paletted 32-bit", img: image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black}), opts: EncodeOptions{ColorMapDepth: 32, Metadata: &TGA2Metadata{}}, wantAttr: 3, wantAlphaBits: 8},
+		{name: "paletted 24-bit", img: image.NewPaletted(image.Rect(0, 0, 1, 1), color.Palette{color.Black}), opts: EncodeOptions{ColorMapDepth: 24, Metadata: &TGA2Metadata{}}, wantAttr: 0, wantAlphaBits: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := EncodeWithOptions(&buf, test.img, &test.opts); err != nil {
+				t.Fatalf("EncodeWithOptions: %v", err)
+			}
+			data := buf.Bytes()
+			footer := data[len(data)-tga2FooterSize:]
+			extOffset := binary.LittleEndian.Uint32(footer[:4])
+			ext := data[extOffset:]
+			if got := ext[tga2OffAttrType]; got != test.wantAttr {
+				t.Fatalf("attributes type=%d, want=%d", got, test.wantAttr)
+			}
+			if got := data[17] & 0x0f; got != test.wantAlphaBits {
+				t.Fatalf("descriptor alpha bits=%d, want=%d", got, test.wantAlphaBits)
+			}
+		})
+	}
+}
+
+func TestEncodeWithOptions_RejectsContradictoryAlphaMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		img  image.Image
+		opts EncodeOptions
+	}{
+		{name: "premultiplied alpha output", img: image.NewNRGBA(image.Rect(0, 0, 1, 1)), opts: EncodeOptions{Metadata: &TGA2Metadata{AttributesType: 4}}},
+		{name: "straight alpha without channel", img: image.NewNRGBA(image.Rect(0, 0, 1, 1)), opts: EncodeOptions{PixelDepth: 24, Metadata: &TGA2Metadata{AttributesType: 3}}},
+		{name: "straight alpha grayscale", img: image.NewGray(image.Rect(0, 0, 1, 1)), opts: EncodeOptions{Metadata: &TGA2Metadata{AttributesType: 3}}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := EncodeWithOptions(&buf, test.img, &test.opts)
+			if !errors.Is(err, ErrMetadata) || !errors.Is(err, ErrFormat) {
+				t.Fatalf("error=%v, want ErrMetadata and ErrFormat", err)
+			}
+			if buf.Len() != 0 {
+				t.Fatalf("validation wrote %d bytes", buf.Len())
+			}
+		})
+	}
+}
+
 func TestEncodeWithOptions_ImageIDTooLong(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	longID := make([]byte, 256)

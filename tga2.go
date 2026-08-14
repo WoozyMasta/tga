@@ -61,9 +61,9 @@ type TGA2Metadata struct {
 	GammaDenominator uint16 `json:"gamma_denominator,omitempty"`
 	// SoftwareVersionLetter is written next to SoftwareVersion.
 	SoftwareVersionLetter byte `json:"software_version_letter,omitempty"`
-	// AttributesType writes image attribute type byte:
+	// AttributesType controls the image attribute type:
 	//
-	//   - 0 means no alpha,
+	//   - 0 means automatic when encoding,
 	//   - 1 means ignorable alpha,
 	//   - 2 means preserve undefined alpha,
 	//   - 3 means useful straight alpha,

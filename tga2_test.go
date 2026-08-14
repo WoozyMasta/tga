@@ -200,13 +200,17 @@ func TestDecodeWithMetadata_AlphaAttributes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			err := EncodeWithOptions(&buf, src, &EncodeOptions{
-				Metadata: &TGA2Metadata{AttributesType: test.attributes},
+				Metadata: &TGA2Metadata{AttributesType: 3},
 			})
 			if err != nil {
 				t.Fatalf("EncodeWithOptions: %v", err)
 			}
 
-			decoded, _, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes()))
+			data := append([]byte(nil), buf.Bytes()...)
+			footer := len(data) - tga2FooterSize
+			extOffset := binary.LittleEndian.Uint32(data[footer : footer+4])
+			data[extOffset+uint32(tga2OffAttrType)] = test.attributes
+			decoded, _, err := DecodeWithMetadata(bytes.NewReader(data))
 			if err != nil {
 				t.Fatalf("DecodeWithMetadata: %v", err)
 			}
@@ -228,11 +232,15 @@ func TestDecodeWithMetadata_AlphaAttributes(t *testing.T) {
 	var buf bytes.Buffer
 	if err := EncodeWithOptions(&buf, src, &EncodeOptions{
 		PixelDepth: 24,
-		Metadata:   &TGA2Metadata{AttributesType: 3},
+		Metadata:   &TGA2Metadata{},
 	}); err != nil {
 		t.Fatalf("EncodeWithOptions without alpha: %v", err)
 	}
-	if _, _, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes())); err != ErrFormat {
+	data := append([]byte(nil), buf.Bytes()...)
+	footer := len(data) - tga2FooterSize
+	extOffset := binary.LittleEndian.Uint32(data[footer : footer+4])
+	data[extOffset+uint32(tga2OffAttrType)] = 3
+	if _, _, err := DecodeWithMetadata(bytes.NewReader(data)); err != ErrFormat {
 		t.Fatalf("missing descriptor alpha error=%v, want=%v", err, ErrFormat)
 	}
 }

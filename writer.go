@@ -21,7 +21,8 @@ import (
 // EncodeOptions controls optional TGA encoding features.
 type EncodeOptions struct {
 	// Metadata enables writing TGA 2.0 footer/extension/developer areas.
-	// Metadata.AttributesType can be used for advanced alpha semantics in TGA 2.0.
+	// Metadata.AttributesType uses zero as automatic:
+	// straight alpha is declared/ when the selected output representation contains an alpha channel.
 	Metadata *TGA2Metadata `json:"metadata,omitempty"`
 	// ImageID writes the optional image ID field after the 18-byte header.
 	ImageID []byte `json:"image_id,omitempty"`
@@ -115,6 +116,10 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		if err != nil {
 			return err
 		}
+		meta, err = prepareMetadataForEncoding(meta, alphaBits)
+		if err != nil {
+			return err
+		}
 		header[17] = buildImageDescriptor(settings.OriginBottom, alphaBits)
 
 		if _, err := out.Write(header[:]); err != nil {
@@ -164,7 +169,11 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		}
 		header[16] = 8
 
-		alphaBits, err := resolveDescriptorAlphaBits(8)
+		alphaBits, err := resolveDescriptorAlphaBits(cMapDepth)
+		if err != nil {
+			return err
+		}
+		meta, err = prepareMetadataForEncoding(meta, alphaBits)
 		if err != nil {
 			return err
 		}
@@ -218,6 +227,10 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		if err != nil {
 			return err
 		}
+		meta, err = prepareMetadataForEncoding(meta, alphaBits)
+		if err != nil {
+			return err
+		}
 		header[17] = buildImageDescriptor(settings.OriginBottom, alphaBits)
 
 		if _, err := out.Write(header[:]); err != nil {
@@ -263,6 +276,10 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		}
 
 		alphaBits, err := resolveDescriptorAlphaBits(trueColorDepth)
+		if err != nil {
+			return err
+		}
+		meta, err = prepareMetadataForEncoding(meta, alphaBits)
 		if err != nil {
 			return err
 		}
@@ -356,6 +373,30 @@ func validateMetadata(meta *TGA2Metadata) error {
 	}
 
 	return nil
+}
+
+// prepareMetadataForEncoding aligns alpha metadata with the selected output representation.
+func prepareMetadataForEncoding(meta *TGA2Metadata, alphaBits uint8) (*TGA2Metadata, error) {
+	if meta == nil {
+		return nil, nil
+	}
+
+	prepared := *meta
+	if alphaBits == 0 {
+		if meta.AttributesType >= 2 {
+			return nil, metadataError("attributes_type", "requires encoded alpha bits")
+		}
+		return &prepared, nil
+	}
+
+	if meta.AttributesType == 0 {
+		prepared.AttributesType = 3
+	}
+	if prepared.AttributesType < 2 || prepared.AttributesType > 3 {
+		return nil, metadataError("attributes_type", "must describe straight alpha")
+	}
+
+	return &prepared, nil
 }
 
 // metadataError wraps field-specific diagnostics in the format sentinel.
