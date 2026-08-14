@@ -61,7 +61,13 @@ type TGA2Metadata struct {
 	GammaDenominator uint16 `json:"gamma_denominator,omitempty"`
 	// SoftwareVersionLetter is written next to SoftwareVersion.
 	SoftwareVersionLetter byte `json:"software_version_letter,omitempty"`
-	// AttributesType writes image attribute type byte.
+	// AttributesType writes image attribute type byte:
+	//
+	//   - 0 means no alpha,
+	//   - 1 means ignorable alpha,
+	//   - 2 means preserve undefined alpha,
+	//   - 3 means useful straight alpha,
+	//   - 4 means useful premultiplied alpha.
 	AttributesType byte `json:"attributes_type,omitempty"`
 }
 
@@ -78,6 +84,8 @@ type Info struct {
 }
 
 // DecodeWithMetadata decodes a seekable TGA stream and reads its TGA 2.0 metadata.
+// AttributesType values 0 and 1 produce opaque pixels, 2 and 3 preserve straight
+// alpha as *image.NRGBA, and 4 returns premultiplied pixels as *image.RGBA.
 func DecodeWithMetadata(r io.ReadSeeker) (image.Image, Info, error) {
 	// Read the ID first so metadata decoding can reuse the regular streaming decoder.
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
@@ -136,6 +144,10 @@ func DecodeWithMetadata(r io.ReadSeeker) (image.Image, Info, error) {
 		if err != nil {
 			return nil, Info{}, err
 		}
+		img, err = applyTGA2AlphaSemantics(img, info.Metadata.AttributesType, h[17])
+		if err != nil {
+			return nil, Info{}, err
+		}
 	}
 
 	if devOffset != 0 {
@@ -154,6 +166,72 @@ func DecodeWithMetadata(r io.ReadSeeker) (image.Image, Info, error) {
 	}
 
 	return img, info, nil
+}
+
+// applyTGA2AlphaSemantics maps TGA 2.0 alpha attributes to Go image models.
+func applyTGA2AlphaSemantics(img image.Image, attributesType, descriptor byte) (image.Image, error) {
+	hasAlpha := descriptor&0x0f != 0
+	switch attributesType {
+	case 0, 1:
+		// No alpha or ignorable alpha is represented as fully opaque pixels.
+		if hasAlpha {
+			return makeOpaqueNRGBA(img), nil
+		}
+		return img, nil
+
+	case 2, 3:
+		// Undefined-but-preserved and useful unassociated alpha are straight.
+		if !hasAlpha {
+			return nil, ErrFormat
+		}
+		return img, nil
+
+	case 4:
+		// Useful associated alpha is represented by the premultiplied RGBA model.
+		if !hasAlpha {
+			return nil, ErrFormat
+		}
+		return makePremultipliedRGBA(img), nil
+
+	default:
+		return nil, ErrFormat
+	}
+}
+
+// makeOpaqueNRGBA returns a copy with alpha discarded and RGB preserved.
+func makeOpaqueNRGBA(src image.Image) *image.NRGBA {
+	b := src.Bounds()
+	dst := image.NewNRGBA(b)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA)
+			c.A = 0xff
+			dst.SetNRGBA(x, y, c)
+		}
+	}
+	return dst
+}
+
+// makePremultipliedRGBA preserves decoded channel bytes in image.RGBA.
+func makePremultipliedRGBA(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	dst := image.NewRGBA(b)
+	if nrgba, ok := src.(*image.NRGBA); ok {
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				c := nrgba.NRGBAAt(x, y)
+				dst.SetRGBA(x, y, color.RGBA(c))
+			}
+		}
+		return dst
+	}
+
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			dst.SetRGBA(x, y, color.RGBAModel.Convert(src.At(x, y)).(color.RGBA))
+		}
+	}
+	return dst
 }
 
 // readTGA2Extension reads and validates the fixed-size extension area.

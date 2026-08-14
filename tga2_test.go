@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"image"
 	"image/color"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -173,6 +174,64 @@ func TestDecodeWithMetadata_RejectsInvalidOffsets(t *testing.T) {
 	binary.LittleEndian.PutUint32(data[footer:footer+4], 1)
 	if _, _, err := DecodeWithMetadata(bytes.NewReader(data)); err != ErrFormat {
 		t.Fatalf("invalid extension size error=%v, want=%v", err, ErrFormat)
+	}
+}
+
+func TestDecodeWithMetadata_AlphaAttributes(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 100, G: 50, B: 25, A: 128})
+
+	tests := []struct {
+		name       string
+		attributes byte
+		want       color.NRGBA
+		wantType   any
+	}{
+		{name: "none", attributes: 0, want: color.NRGBA{R: 100, G: 50, B: 25, A: 255}, wantType: &image.NRGBA{}},
+		{name: "ignore", attributes: 1, want: color.NRGBA{R: 100, G: 50, B: 25, A: 255}, wantType: &image.NRGBA{}},
+		{name: "preserve", attributes: 2, want: color.NRGBA{R: 100, G: 50, B: 25, A: 128}, wantType: &image.NRGBA{}},
+		{name: "straight", attributes: 3, want: color.NRGBA{R: 100, G: 50, B: 25, A: 128}, wantType: &image.NRGBA{}},
+		{name: "premultiplied", attributes: 4, want: color.NRGBA{R: 100, G: 50, B: 25, A: 128}, wantType: &image.RGBA{}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := EncodeWithOptions(&buf, src, &EncodeOptions{
+				Metadata: &TGA2Metadata{AttributesType: test.attributes},
+			})
+			if err != nil {
+				t.Fatalf("EncodeWithOptions: %v", err)
+			}
+
+			decoded, _, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes()))
+			if err != nil {
+				t.Fatalf("DecodeWithMetadata: %v", err)
+			}
+			if reflect.TypeOf(decoded) != reflect.TypeOf(test.wantType) {
+				t.Fatalf("decoded type=%T, want=%T", decoded, test.wantType)
+			}
+			if test.attributes == 4 {
+				got := decoded.(*image.RGBA).RGBAAt(0, 0)
+				want := color.RGBA(test.want)
+				if got != want {
+					t.Fatalf("decoded pixel=%+v, want=%+v", got, want)
+				}
+			} else if got := color.NRGBAModel.Convert(decoded.At(0, 0)).(color.NRGBA); got != test.want {
+				t.Fatalf("decoded pixel=%+v, want=%+v", got, test.want)
+			}
+		})
+	}
+
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, src, &EncodeOptions{
+		PixelDepth: 24,
+		Metadata:   &TGA2Metadata{AttributesType: 3},
+	}); err != nil {
+		t.Fatalf("EncodeWithOptions without alpha: %v", err)
+	}
+	if _, _, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes())); err != ErrFormat {
+		t.Fatalf("missing descriptor alpha error=%v, want=%v", err, ErrFormat)
 	}
 }
 
