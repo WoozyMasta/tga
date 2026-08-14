@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
+* A deterministic conformance matrix now exercises supported pixel depths,
+  origins, raw/RLE packets, palette origins, and malformed input cases.
 * `DecodeWithMetadata` for reading TGA 2.0 image IDs,
   extension metadata, thumbnails, and developer areas.
 * `DecodeWithOptions` for opt-in pixel and decoded-memory limits.
