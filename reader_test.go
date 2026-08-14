@@ -941,3 +941,26 @@ func TestRoundTrip_Testdata_EncodeFirst(t *testing.T) {
 		t.Error("nrgba round-trip (encode first): pixel mismatch")
 	}
 }
+
+func TestWriteRLEPaletteRawAcrossRows(t *testing.T) {
+	dst := make([]byte, 32*2)
+	src := make([]byte, 17)
+	for i := range src {
+		src[i] = byte(i)
+	}
+
+	if err := writeRLEPaletteRaw(dst, 32, 20, src, 0, len(src)); err != nil {
+		t.Fatalf("write raw palette packet: %v", err)
+	}
+
+	for i := 0; i < 12; i++ {
+		if got, want := dst[32+20+i], byte(i); got != want {
+			t.Fatalf("bottom row pixel %d: got %d, want %d", i, got, want)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if got, want := dst[i], byte(12+i); got != want {
+			t.Fatalf("top row pixel %d: got %d, want %d", i, got, want)
+		}
+	}
+}

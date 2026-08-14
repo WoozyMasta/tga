@@ -889,7 +889,7 @@ func writeRLEPaletteRaw(dst []byte, w, start int, src []byte, colorMapStart, col
 		row := dst[y*w+x : y*w+x+chunk]
 
 		for i := range chunk {
-			value, err := normalizePaletteIndex(src[srcOffset+i], colorMapStart, colorMapLen)
+			value, err := normalizePaletteIndex(src[i], colorMapStart, colorMapLen)
 			if err != nil {
 				return err
 			}

@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Fixed
 
+* RLE paletted decoding no longer indexes raw packet data past the packet
+  when a packet crosses a scanline boundary.
 * 16-bit true-color decoding now preserves the A1R5G5B5 alpha bit
   when the image descriptor declares one attribute bit;
   15-bit RGB555 remains opaque.
