@@ -18,20 +18,20 @@ import (
 type EncodeOptions struct {
 	// Metadata enables writing TGA 2.0 footer/extension/developer areas.
 	// Metadata.AttributesType can be used for advanced alpha semantics in TGA 2.0.
-	Metadata *TGA2Metadata
+	Metadata *TGA2Metadata `json:"metadata,omitempty"`
 	// ImageID writes the optional image ID field after the 18-byte header.
-	ImageID []byte
+	ImageID []byte `json:"image_id,omitempty"`
 	// ColorMapDepth sets palette entry depth for paletted output.
 	// Supported values: 24, 32. Zero means auto (24 unless palette has alpha).
-	ColorMapDepth int
+	ColorMapDepth int `json:"color_map_depth,omitempty"`
 	// PixelDepth sets true-color depth for non-grayscale/non-paletted output.
 	// Supported values: 16, 24, 32. Zero means default 32.
-	PixelDepth int
+	PixelDepth int `json:"pixel_depth,omitempty"`
 	// OriginBottom sets image origin to bottom-left when true.
 	// Default is top-left.
-	OriginBottom bool
+	OriginBottom bool `json:"origin_bottom,omitempty"`
 	// RLE enables TGA RLE packet compression (types 10/11).
-	RLE bool
+	RLE bool `json:"rle,omitempty"`
 }
 
 // Encode writes the image m in TGA format to w.

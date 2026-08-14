@@ -18,8 +18,15 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
+* `DecodeWithMetadata` for reading TGA 2.0 image IDs,
+  extension metadata, thumbnails, and developer areas.
 * `DecodeWithOptions` for opt-in pixel and decoded-memory limits.
 * 16-bit grayscale+alpha decoding for raw and RLE TGA images.
+
+### Changed
+
+* Public encoding, decoding, and TGA 2.0 metadata option structs now expose
+  stable JSON field names.
 
 ### Fixed
 

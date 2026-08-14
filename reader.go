@@ -34,10 +34,10 @@ const maxInt = int(^uint(0) >> 1)
 // A zero limit disables that limit.
 type DecodeOptions struct {
 	// MaxPixels limits the total decoded image pixels.
-	MaxPixels uint64
+	MaxPixels uint64 `json:"max_pixels,omitempty"`
 	// MaxDecodedBytes limits storage for decoded pixels:
 	// four bytes per NRGBA pixel and one byte per Gray or Paletted pixel.
-	MaxDecodedBytes uint64
+	MaxDecodedBytes uint64 `json:"max_decoded_bytes,omitempty"`
 }
 
 // parsedHeader is the validated fixed-size TGA image specification.

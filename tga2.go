@@ -5,6 +5,7 @@
 package tga
 
 import (
+	"bytes"
 	"encoding/binary"
 	"image"
 	"image/color"
@@ -35,33 +36,283 @@ const tga2FooterSignature = "TRUEVISION-XFILE.\x00"
 // TGA2Metadata describes optional TGA 2.0 extension/developer metadata.
 type TGA2Metadata struct {
 	// Timestamp writes local date/time fields if non-zero.
-	Timestamp time.Time
+	Timestamp time.Time `json:"timestamp,omitzero"`
 	// Thumbnail writes TGA 2.0 postage stamp block (24-bit BGR).
-	Thumbnail image.Image
+	Thumbnail image.Image `json:"thumbnail,omitempty"`
 	// Author is stored in the 41-byte Author Name field.
-	Author string
+	Author string `json:"author,omitempty"`
 	// JobName is written to the Job Name/ID field.
-	JobName string
+	JobName string `json:"job_name,omitempty"`
 	// SoftwareID is written to the Software ID field.
-	SoftwareID string
+	SoftwareID string `json:"software_id,omitempty"`
 	// Comments stores up to 4 lines, 81 bytes each.
-	Comments []string
+	Comments []string `json:"comments,omitempty"`
 	// DeveloperArea writes raw developer-area bytes.
-	DeveloperArea []byte
+	DeveloperArea []byte `json:"developer_area,omitempty"`
 	// JobDuration is encoded as hours/minutes/seconds.
-	JobDuration time.Duration
+	JobDuration time.Duration `json:"job_duration,omitempty"`
 	// Gamma writes gamma as rational value if > 0 and explicit ratio is unset.
-	Gamma float64
+	Gamma float64 `json:"gamma,omitempty"`
 	// SoftwareVersion is written as numeric version value.
-	SoftwareVersion uint16
+	SoftwareVersion uint16 `json:"software_version,omitempty"`
 	// GammaNumerator overrides gamma ratio numerator when set with denominator.
-	GammaNumerator uint16
+	GammaNumerator uint16 `json:"gamma_numerator,omitempty"`
 	// GammaDenominator overrides gamma ratio denominator when set with numerator.
-	GammaDenominator uint16
+	GammaDenominator uint16 `json:"gamma_denominator,omitempty"`
 	// SoftwareVersionLetter is written next to SoftwareVersion.
-	SoftwareVersionLetter byte
+	SoftwareVersionLetter byte `json:"software_version_letter,omitempty"`
 	// AttributesType writes image attribute type byte.
-	AttributesType byte
+	AttributesType byte `json:"attributes_type,omitempty"`
+}
+
+// Info contains metadata read by DecodeWithMetadata.
+type Info struct {
+	// Metadata contains the parsed TGA 2.0 extension area, if present.
+	Metadata *TGA2Metadata `json:"metadata,omitempty"`
+	// ImageID contains the optional TGA image identification field.
+	ImageID []byte `json:"image_id,omitempty"`
+	// DeveloperArea contains bytes between the developer-area offset and footer.
+	DeveloperArea []byte `json:"developer_area,omitempty"`
+	// HasFooter reports whether the TGA 2.0 footer signature was found.
+	HasFooter bool `json:"has_footer"`
+}
+
+// DecodeWithMetadata decodes a seekable TGA stream and reads its TGA 2.0 metadata.
+func DecodeWithMetadata(r io.ReadSeeker) (image.Image, Info, error) {
+	// Read the ID first so metadata decoding can reuse the regular streaming decoder.
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return nil, Info{}, err
+	}
+	var h [headerSize]byte
+	if _, err := io.ReadFull(r, h[:]); err != nil {
+		return nil, Info{}, err
+	}
+
+	id := make([]byte, h[0])
+	if _, err := io.ReadFull(r, id); err != nil {
+		return nil, Info{}, err
+	}
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return nil, Info{}, err
+	}
+
+	// Decode validates and decodes pixels using the same path as Decode(io.Reader).
+	img, err := Decode(r)
+	if err != nil {
+		return nil, Info{}, err
+	}
+	info := Info{ImageID: id}
+	end, err := r.Seek(0, io.SeekEnd)
+	if err != nil || end < tga2FooterSize {
+		return img, info, err
+	}
+
+	// A TGA 2.0 footer is optional; legacy files simply return the decoded image.
+	if _, err = r.Seek(-tga2FooterSize, io.SeekEnd); err != nil {
+		return nil, Info{}, err
+	}
+
+	footer := make([]byte, tga2FooterSize)
+	if _, err = io.ReadFull(r, footer); err != nil {
+		return nil, Info{}, err
+	}
+	if string(footer[8:]) != tga2FooterSignature {
+		return img, info, nil
+	}
+	info.HasFooter = true
+
+	// Footer offsets are file-relative.
+	// Keep all subsequent reads inside the payload preceding the footer
+	// before seeking to any offset supplied by input.
+	extOffset := int64(binary.LittleEndian.Uint32(footer[:4]))
+	devOffset := int64(binary.LittleEndian.Uint32(footer[4:8]))
+	dataEnd := end - tga2FooterSize
+	if extOffset != 0 {
+		ext, err := readTGA2Extension(r, extOffset, dataEnd)
+		if err != nil {
+			return nil, Info{}, err
+		}
+		info.Metadata, err = parseTGA2Metadata(r, ext, extOffset, dataEnd)
+		if err != nil {
+			return nil, Info{}, err
+		}
+	}
+
+	if devOffset != 0 {
+		// The writer emits the developer area immediately before the footer,
+		// so its size is derived from the developer offset and the footer boundary.
+		if devOffset >= dataEnd || (extOffset != 0 && devOffset < extOffset) {
+			return nil, Info{}, ErrFormat
+		}
+		if _, err = r.Seek(devOffset, io.SeekStart); err != nil {
+			return nil, Info{}, err
+		}
+		info.DeveloperArea = make([]byte, dataEnd-devOffset)
+		if _, err = io.ReadFull(r, info.DeveloperArea); err != nil {
+			return nil, Info{}, err
+		}
+	}
+
+	return img, info, nil
+}
+
+// readTGA2Extension reads and validates the fixed-size extension area.
+func readTGA2Extension(r io.ReadSeeker, offset, dataEnd int64) ([]byte, error) {
+	if offset < 0 || offset > dataEnd-int64(tga2ExtensionSize) {
+		return nil, ErrFormat
+	}
+
+	if _, err := r.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	ext := make([]byte, tga2ExtensionSize)
+	if _, err := io.ReadFull(r, ext); err != nil {
+		return nil, err
+	}
+	if int64(binary.LittleEndian.Uint16(ext[:2])) != int64(tga2ExtensionSize) {
+		return nil, ErrFormat
+	}
+
+	return ext, nil
+}
+
+// parseTGA2Metadata converts extension fields and reads the optional thumbnail.
+func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64) (*TGA2Metadata, error) {
+	meta := &TGA2Metadata{
+		Author:                readASCIIZ(ext[tga2OffAuthor : tga2OffAuthor+41]),
+		Comments:              readCommentLines(ext[tga2OffComments : tga2OffComments+324]),
+		JobName:               readASCIIZ(ext[tga2OffJobName : tga2OffJobName+41]),
+		SoftwareID:            readASCIIZ(ext[tga2OffSoftwareID : tga2OffSoftwareID+41]),
+		SoftwareVersion:       binary.LittleEndian.Uint16(ext[tga2OffSoftwareVer : tga2OffSoftwareVer+2]),
+		SoftwareVersionLetter: ext[tga2OffSoftwareVer+2],
+		AttributesType:        ext[tga2OffAttrType],
+	}
+
+	// Zero timestamp fields represent an unset optional timestamp;
+	// non-zero fields must round-trip through time.Date without normalization.
+	timestamp, err := readTimestamp(ext[tga2OffTimestamp : tga2OffTimestamp+12])
+	if err != nil {
+		return nil, err
+	}
+	meta.Timestamp = timestamp
+
+	// Validate minute and second ranges before converting the duration to nanoseconds.
+	duration, err := readJobDuration(ext[tga2OffJobTime : tga2OffJobTime+6])
+	if err != nil {
+		return nil, err
+	}
+
+	meta.JobDuration = duration
+	meta.GammaNumerator = binary.LittleEndian.Uint16(ext[tga2OffGammaNum : tga2OffGammaNum+2])
+	meta.GammaDenominator = binary.LittleEndian.Uint16(ext[tga2OffGammaDen : tga2OffGammaDen+2])
+
+	// Preserve the stored ratio and expose its numeric value when a denominator exists.
+	if meta.GammaDenominator != 0 {
+		meta.Gamma = float64(meta.GammaNumerator) / float64(meta.GammaDenominator)
+	}
+
+	postageOffset := int64(binary.LittleEndian.Uint32(ext[tga2OffPostageStamp : tga2OffPostageStamp+4]))
+	if postageOffset != 0 {
+		// A zero offset means no thumbnail.
+		// Otherwise, constrain the offset and decoded size to the payload
+		// before allocating the thumbnail buffer.
+		if postageOffset < extOffset+int64(tga2ExtensionSize) ||
+			postageOffset > dataEnd-2 {
+			return nil, ErrFormat
+		}
+
+		if _, err := r.Seek(postageOffset, io.SeekStart); err != nil {
+			return nil, err
+		}
+
+		var dimensions [2]byte
+		if _, err := io.ReadFull(r, dimensions[:]); err != nil {
+			return nil, err
+		}
+
+		size := int64(dimensions[0])*int64(dimensions[1])*3 + 2
+		if size > dataEnd-postageOffset {
+			return nil, ErrFormat
+		}
+
+		pixels := make([]byte, size-2)
+		if _, err := io.ReadFull(r, pixels); err != nil {
+			return nil, err
+		}
+
+		width := int(dimensions[0])
+		height := int(dimensions[1])
+		thumb := image.NewNRGBA(image.Rect(0, 0, width, height))
+		for i, y := 0, 0; y < thumb.Bounds().Dy(); y++ {
+			for x := 0; x < thumb.Bounds().Dx(); x++ {
+				thumb.SetNRGBA(x, y, color.NRGBA{R: pixels[i+2], G: pixels[i+1], B: pixels[i], A: 255})
+				i += 3
+			}
+		}
+
+		meta.Thumbnail = thumb
+	}
+
+	return meta, nil
+}
+
+// readASCIIZ reads a fixed-width, zero-terminated TGA text field.
+func readASCIIZ(src []byte) string {
+	if end := bytes.IndexByte(src, 0); end >= 0 {
+		src = src[:end]
+	}
+
+	return string(src)
+}
+
+// readCommentLines reads the four fixed-width comment fields.
+func readCommentLines(src []byte) []string {
+	comments := make([]string, 0, 4)
+	for i := range 4 {
+		line := readASCIIZ(src[i*81 : (i+1)*81])
+		if line != "" {
+			comments = append(comments, line)
+		}
+	}
+
+	return comments
+}
+
+// readTimestamp decodes and validates the extension-area timestamp.
+func readTimestamp(src []byte) (time.Time, error) {
+	var parts [6]int
+	for i := range parts {
+		parts[i] = int(binary.LittleEndian.Uint16(src[i*2 : i*2+2]))
+	}
+	if parts == [6]int{} {
+		return time.Time{}, nil
+	}
+
+	ts := time.Date(parts[2], time.Month(parts[0]), parts[1], parts[3], parts[4], parts[5], 0, time.Local)
+	if ts.Month() != time.Month(parts[0]) ||
+		ts.Day() != parts[1] ||
+		ts.Year() != parts[2] ||
+		ts.Hour() != parts[3] ||
+		ts.Minute() != parts[4] ||
+		ts.Second() != parts[5] {
+		return time.Time{}, ErrFormat
+	}
+
+	return ts, nil
+}
+
+// readJobDuration decodes the extension-area hours/minutes/seconds fields.
+func readJobDuration(src []byte) (time.Duration, error) {
+	hours := int64(binary.LittleEndian.Uint16(src[0:2]))
+	minutes := int64(binary.LittleEndian.Uint16(src[2:4]))
+	seconds := int64(binary.LittleEndian.Uint16(src[4:6]))
+
+	if minutes >= 60 || seconds >= 60 {
+		return 0, ErrFormat
+	}
+
+	return time.Duration((hours*3600 + minutes*60 + seconds) * int64(time.Second)), nil
 }
 
 // countingWriter wraps io.Writer and tracks written bytes.

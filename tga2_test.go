@@ -35,6 +35,7 @@ func TestEncodeWithOptions_TGA2MetadataWritesFooterAndAreas(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := EncodeWithOptions(&buf, img, &EncodeOptions{
+		ImageID:  []byte("image-id"),
 		Metadata: meta,
 	})
 	if err != nil {
@@ -126,6 +127,52 @@ func TestEncodeWithOptions_TGA2MetadataWritesFooterAndAreas(t *testing.T) {
 	}
 	if !imagesEqual(img, decoded) {
 		t.Fatalf("decoded image mismatch with metadata tail")
+	}
+
+	decoded, info, err := DecodeWithMetadata(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeWithMetadata: %v", err)
+	}
+	if !imagesEqual(img, decoded) {
+		t.Fatalf("metadata decoded image mismatch")
+	}
+	if !bytes.Equal(info.ImageID, []byte("image-id")) || !info.HasFooter || info.Metadata == nil {
+		t.Fatalf("metadata info missing: %+v", info)
+	}
+	got := info.Metadata
+	if got.Author != meta.Author || got.JobName != meta.JobName || got.SoftwareID != meta.SoftwareID ||
+		got.SoftwareVersion != meta.SoftwareVersion || got.SoftwareVersionLetter != meta.SoftwareVersionLetter ||
+		got.AttributesType != meta.AttributesType || len(got.Comments) != len(meta.Comments) {
+		t.Fatalf("metadata fields mismatch: got=%+v want=%+v", got, meta)
+	}
+	if !got.Timestamp.Equal(meta.Timestamp) || got.JobDuration != meta.JobDuration || got.Gamma != meta.Gamma {
+		t.Fatalf("metadata numeric fields mismatch: got=%+v want=%+v", got, meta)
+	}
+	if !imagesEqual(meta.Thumbnail, got.Thumbnail) {
+		t.Fatalf("thumbnail mismatch")
+	}
+	if !bytes.Equal(info.DeveloperArea, dev) {
+		t.Fatalf("developer area mismatch: got=%x want=%x", info.DeveloperArea, dev)
+	}
+}
+
+func TestDecodeWithMetadata_RejectsInvalidOffsets(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, img, &EncodeOptions{Metadata: &TGA2Metadata{Author: "test"}}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+	data := append([]byte(nil), buf.Bytes()...)
+	footer := len(data) - tga2FooterSize
+	binary.LittleEndian.PutUint32(data[footer:footer+4], uint32(len(data)))
+	if _, _, err := DecodeWithMetadata(bytes.NewReader(data)); err != ErrFormat {
+		t.Fatalf("invalid extension offset error=%v, want=%v", err, ErrFormat)
+	}
+
+	data = append([]byte(nil), buf.Bytes()...)
+	binary.LittleEndian.PutUint32(data[footer:footer+4], 1)
+	if _, _, err := DecodeWithMetadata(bytes.NewReader(data)); err != ErrFormat {
+		t.Fatalf("invalid extension size error=%v, want=%v", err, ErrFormat)
 	}
 }
 
