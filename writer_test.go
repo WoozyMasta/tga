@@ -9,6 +9,54 @@ import (
 	"testing"
 )
 
+type writeCallCounter struct {
+	bytes.Buffer
+	calls int
+}
+
+func (w *writeCallCounter) Write(p []byte) (int, error) {
+	w.calls++
+	return w.Buffer.Write(p)
+}
+
+func TestEncode_RLEPacketsUseSingleWritePerPacket(t *testing.T) {
+	var oneByte writeCallCounter
+	if err := encodeRLEPackets1WithScratch(&oneByte, []byte{7, 7, 1, 2, 3}, make([]byte, 129)); err != nil {
+		t.Fatalf("encode one-byte packets: %v", err)
+	}
+	if oneByte.calls != 2 {
+		t.Fatalf("one-byte packet writes=%d, want=2", oneByte.calls)
+	}
+	wantOneByte := []byte{0x81, 7, 0x02, 1, 2, 3}
+	if !bytes.Equal(oneByte.Bytes(), wantOneByte) {
+		t.Fatalf("one-byte packets=%x, want=%x", oneByte.Bytes(), wantOneByte)
+	}
+
+	packed := []byte{
+		1, 2, 3, 1, 2, 3,
+		4, 5, 6,
+		7, 8, 9,
+	}
+	var multiByte writeCallCounter
+	if err := encodeRLEPackets(&multiByte, packed, 3, make([]byte, 385)); err != nil {
+		t.Fatalf("encode multi-byte packets: %v", err)
+	}
+	if multiByte.calls != 2 {
+		t.Fatalf("multi-byte packet writes=%d, want=2", multiByte.calls)
+	}
+}
+
+func TestWritePaletteUsesSingleWrite(t *testing.T) {
+	var counter writeCallCounter
+	pal := color.Palette{color.Black, color.White}
+	if err := writePalette(&counter, pal, 32); err != nil {
+		t.Fatalf("write palette: %v", err)
+	}
+	if counter.calls != 1 {
+		t.Fatalf("palette writes=%d, want=1", counter.calls)
+	}
+}
+
 func TestEncode_ZeroSize(t *testing.T) {
 	empty := image.NewNRGBA(image.Rect(0, 0, 0, 0))
 	err := Encode(bytes.NewBuffer(nil), empty)

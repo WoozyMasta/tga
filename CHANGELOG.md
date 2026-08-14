@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Encoder palette data and RLE packets now use bounded buffers
+  to reduce the number of underlying `io.Writer.Write` calls.
 * RLE decoding now writes bottom-origin pixels directly to logical rows,
   avoiding the full-frame vertical flip pass.
 * Raw grayscale and paletted decoding now reads directly

@@ -570,8 +570,7 @@ func encodeGray(w io.Writer, m *image.Gray, b image.Rectangle, originBottom bool
 
 // encodeGrayRLE writes 8-bit grayscale pixel data using TGA RLE packets.
 func encodeGrayRLE(w io.Writer, m *image.Gray, b image.Rectangle, originBottom bool) error {
-	header := []byte{0}
-	value := []byte{0}
+	packet := make([]byte, 129)
 
 	width := b.Dx()
 	for rowIndex := 0; rowIndex < b.Dy(); rowIndex++ {
@@ -582,7 +581,7 @@ func encodeGrayRLE(w io.Writer, m *image.Gray, b image.Rectangle, originBottom b
 
 		srcOffset := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X - m.Rect.Min.X)
 		rowData := m.Pix[srcOffset : srcOffset+width]
-		if err := encodeRLEPackets1WithScratch(w, rowData, header, value); err != nil {
+		if err := encodeRLEPackets1WithScratch(w, rowData, packet); err != nil {
 			return err
 		}
 	}
@@ -710,8 +709,10 @@ func encodeNRGBARLE(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, o
 	}
 
 	width := b.Dx()
-	rowPacked := make([]byte, width*bytesPerPixel)
-	header := []byte{0} // reused across rows to avoid a per-row allocation
+	rowSize := width * bytesPerPixel
+	rowStorage := make([]byte, rowSize+1+128*bytesPerPixel)
+	rowPacked := rowStorage[:rowSize]
+	packet := rowStorage[rowSize:]
 
 	for rowIndex := 0; rowIndex < b.Dy(); rowIndex++ {
 		y := b.Min.Y + rowIndex
@@ -722,7 +723,7 @@ func encodeNRGBARLE(w io.Writer, m *image.NRGBA, b image.Rectangle, depth int, o
 		i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X-m.Rect.Min.X)*4
 		packNRGBARow(rowPacked, m.Pix[i0:i0+width*4], depth)
 
-		if err := encodeRLEPackets(w, rowPacked, bytesPerPixel, header); err != nil {
+		if err := encodeRLEPackets(w, rowPacked, bytesPerPixel, packet); err != nil {
 			return err
 		}
 	}
@@ -751,8 +752,7 @@ func encodePaletted(w io.Writer, m *image.Paletted, b image.Rectangle, originBot
 
 // encodePalettedRLE writes 8-bit indexed pixel data using TGA RLE packets.
 func encodePalettedRLE(w io.Writer, m *image.Paletted, b image.Rectangle, originBottom bool) error {
-	header := []byte{0}
-	value := []byte{0}
+	packet := make([]byte, 129)
 
 	width := b.Dx()
 	for rowIndex := 0; rowIndex < b.Dy(); rowIndex++ {
@@ -763,7 +763,7 @@ func encodePalettedRLE(w io.Writer, m *image.Paletted, b image.Rectangle, origin
 
 		i0 := (y-m.Rect.Min.Y)*m.Stride + (b.Min.X - m.Rect.Min.X)
 		rowData := m.Pix[i0 : i0+width]
-		if err := encodeRLEPackets1WithScratch(w, rowData, header, value); err != nil {
+		if err := encodeRLEPackets1WithScratch(w, rowData, packet); err != nil {
 			return err
 		}
 	}
@@ -773,6 +773,9 @@ func encodePalettedRLE(w io.Writer, m *image.Paletted, b image.Rectangle, origin
 
 // writePalette writes a color map in BGR/BGRA order.
 func writePalette(w io.Writer, pal color.Palette, depth int) error {
+	entryBytes := depth / 8
+	paletteData := make([]byte, len(pal)*entryBytes)
+	offset := 0
 	for _, c := range pal {
 		converted := color.NRGBAModel.Convert(c).(color.NRGBA)
 		r := converted.R
@@ -782,30 +785,24 @@ func writePalette(w io.Writer, pal color.Palette, depth int) error {
 
 		switch depth {
 		case 24:
-			var entry [3]byte
-			entry[0] = b
-			entry[1] = g
-			entry[2] = r
-			if _, err := w.Write(entry[:]); err != nil {
-				return err
-			}
+			paletteData[offset+0] = b
+			paletteData[offset+1] = g
+			paletteData[offset+2] = r
 
 		case 32:
-			var entry [4]byte
-			entry[0] = b
-			entry[1] = g
-			entry[2] = r
-			entry[3] = a
-			if _, err := w.Write(entry[:]); err != nil {
-				return err
-			}
+			paletteData[offset+0] = b
+			paletteData[offset+1] = g
+			paletteData[offset+2] = r
+			paletteData[offset+3] = a
 
 		default:
 			return ErrUnsupported
 		}
+		offset += entryBytes
 	}
 
-	return nil
+	_, err := w.Write(paletteData)
+	return err
 }
 
 // encodeRGB555 encodes 8-bit RGBA to A1R5G5B5 little-endian value.
@@ -821,12 +818,10 @@ func encodeRGB555(r, g, b, a uint8) uint16 {
 	return alphaBit | (r5 << 10) | (g5 << 5) | b5
 }
 
-// encodeRLEPackets writes TGA RLE packets from packed pixels
-// using a caller-provided 1-byte header scratch,
-// so per-row callers avoid allocating once per row.
-func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, header []byte) error {
+// encodeRLEPackets writes TGA RLE packets from packed pixels using a bounded packet buffer.
+func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, packet []byte) error {
 	if bytesPerPixel == 1 {
-		return encodeRLEPackets1WithScratch(w, packed, header, []byte{0})
+		return encodeRLEPackets1WithScratch(w, packed, packet)
 	}
 
 	totalPixels := len(packed) / bytesPerPixel
@@ -841,13 +836,10 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, header []by
 				return err
 			}
 
-			header[0] = packetHeader
-			if _, err := w.Write(header); err != nil {
-				return err
-			}
-
 			start := i * bytesPerPixel
-			if _, err := w.Write(packed[start : start+bytesPerPixel]); err != nil {
+			packet[0] = packetHeader
+			copy(packet[1:1+bytesPerPixel], packed[start:start+bytesPerPixel])
+			if _, err := w.Write(packet[:1+bytesPerPixel]); err != nil {
 				return err
 			}
 
@@ -876,14 +868,11 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, header []by
 			return err
 		}
 
-		header[0] = packetHeader
-		if _, err := w.Write(header); err != nil {
-			return err
-		}
-
 		start := rawStart * bytesPerPixel
 		end := start + rawLen*bytesPerPixel
-		if _, err := w.Write(packed[start:end]); err != nil {
+		packet[0] = packetHeader
+		copy(packet[1:], packed[start:end])
+		if _, err := w.Write(packet[:1+rawLen*bytesPerPixel]); err != nil {
 			return err
 		}
 	}
@@ -891,8 +880,8 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, header []by
 	return nil
 }
 
-// encodeRLEPackets1WithScratch writes one-byte-pixel RLE using caller scratch.
-func encodeRLEPackets1WithScratch(w io.Writer, packed []byte, header, value []byte) error {
+// encodeRLEPackets1WithScratch writes one-byte-pixel RLE using a bounded packet buffer.
+func encodeRLEPackets1WithScratch(w io.Writer, packed, packet []byte) error {
 	totalPixels := len(packed)
 	i := 0
 
@@ -909,13 +898,9 @@ func encodeRLEPackets1WithScratch(w io.Writer, packed []byte, header, value []by
 				return err
 			}
 
-			header[0] = packetHeader
-			if _, err := w.Write(header); err != nil {
-				return err
-			}
-
-			value[0] = pv
-			if _, err := w.Write(value); err != nil {
+			packet[0] = packetHeader
+			packet[1] = pv
+			if _, err := w.Write(packet[:2]); err != nil {
 				return err
 			}
 
@@ -946,12 +931,9 @@ func encodeRLEPackets1WithScratch(w io.Writer, packed []byte, header, value []by
 			return err
 		}
 
-		header[0] = packetHeader
-		if _, err := w.Write(header); err != nil {
-			return err
-		}
-
-		if _, err := w.Write(packed[rawStart : rawStart+rawLen]); err != nil {
+		packet[0] = packetHeader
+		copy(packet[1:], packed[rawStart:rawStart+rawLen])
+		if _, err := w.Write(packet[:1+rawLen]); err != nil {
 			return err
 		}
 	}
