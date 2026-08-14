@@ -25,12 +25,12 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
-* Encoder TGA 2.0 alpha metadata now matches the emitted pixel representation;
-  contradictory alpha attributes are rejected.
 * Encoder depth options are now validated only for applicable image modes;
   irrelevant `PixelDepth` and `ColorMapDepth` values are ignored.
-* TGA 2.0 metadata is validated before encoding; invalid fixed-width fields,
-  timestamps, durations, gamma values, thumbnails, and offsets are rejected.
+* TGA 2.0 metadata encoding now validates fixed-width fields,
+  timestamps, durations, gamma, thumbnails, and offsets,
+  and rejects alpha attributes inconsistent
+  with the emitted pixel representation.
 * `DecodeWithMetadata` now applies TGA 2.0 alpha attribute semantics
   and distinguishes straight and premultiplied alpha image models.
 * Public encoding, decoding, and TGA 2.0 metadata option structs now expose
