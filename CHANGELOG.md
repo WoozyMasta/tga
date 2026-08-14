@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* RLE decoding now writes bottom-origin pixels directly to logical rows,
+  avoiding the full-frame vertical flip pass.
 * Raw grayscale and paletted decoding now reads directly
   into final pixel storage, removing temporary per-row buffers.
 * Encoder depth options are now validated only for applicable image modes;

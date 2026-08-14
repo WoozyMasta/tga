@@ -575,7 +575,7 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool,
 }
 
 // decodeRLE decodes RLE-compressed true-color or grayscale data.
-// RLE packets may cross scan lines; we decode linearly then flip if needed.
+// RLE packets may cross scan lines; chunks are placed into logical rows directly.
 func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (image.Image, error) {
 	bytesPerPixel := (depth + 7) / 8
 	totalPixels, err := checkedMul(w, h)
@@ -606,9 +606,11 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 	if err != nil {
 		return nil, err
 	}
-	rawBuf := make([]byte, rawBufferSize)
+	var rawBuf []byte
+	if depth != 8 || flipY {
+		rawBuf = make([]byte, rawBufferSize)
+	}
 	pixelsRead := 0
-	outIdx := 0
 
 	for pixelsRead < totalPixels {
 		packetHeader, err := r.ReadByte()
@@ -630,10 +632,13 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 			}
 
 			if isGray {
-				dst := outPix[outIdx : outIdx+count]
-				dst[0] = pixelBuf[0]
-				replicatePattern(dst, 1)
-				outIdx += count
+				if flipY {
+					writeRLEGrayRun(outPix, w, pixelsRead, count, pixelBuf[0])
+				} else {
+					dst := outPix[pixelsRead : pixelsRead+count]
+					dst[0] = pixelBuf[0]
+					replicatePattern(dst, 1)
+				}
 			} else {
 				var rv, gv, bv, av uint8
 
@@ -653,20 +658,27 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 					rv, gv, bv, av = c.R, c.G, c.B, c.A
 				}
 
-				// Write one pixel, then replicate it across the run via memmove.
-				dst := outPix[outIdx : outIdx+count*4]
-				dst[0], dst[1], dst[2], dst[3] = rv, gv, bv, av
-				replicatePattern(dst, 4)
-				outIdx += count * 4
+				if flipY {
+					writeRLETrueColorRun(outPix, w, pixelsRead, count, rv, gv, bv, av)
+				} else {
+					dst := outPix[pixelsRead*4 : (pixelsRead+count)*4]
+					dst[0], dst[1], dst[2], dst[3] = rv, gv, bv, av
+					replicatePattern(dst, 4)
+				}
 			}
 		} else {
 			if isGray {
-				target := outPix[outIdx : outIdx+count]
-				if _, err := io.ReadFull(r, target); err != nil {
-					return nil, err
+				if flipY {
+					buf := rawBuf[:count]
+					if _, err := io.ReadFull(r, buf); err != nil {
+						return nil, err
+					}
+					writeRLEGrayRaw(outPix, w, pixelsRead, buf)
+				} else {
+					if _, err := io.ReadFull(r, outPix[pixelsRead:pixelsRead+count]); err != nil {
+						return nil, err
+					}
 				}
-
-				outIdx += count
 			} else {
 				rawLen, err := checkedMul(count, bytesPerPixel)
 				if err != nil {
@@ -677,22 +689,84 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 					return nil, err
 				}
 
-				convertBufferToNRGBA(outPix[outIdx:], buf, count, depth, hasAlpha)
-				outIdx += count * 4
+				if flipY {
+					writeRLETrueColorRaw(outPix, w, pixelsRead, buf, count, depth, hasAlpha)
+				} else {
+					convertBufferToNRGBA(outPix[pixelsRead*4:], buf, count, depth, hasAlpha)
+				}
 			}
 		}
 
 		pixelsRead += count
 	}
 
-	if flipY {
-		flipImageVertically(img, w, h)
-	}
 	if flipX {
 		flipImageHorizontally(img, w, h)
 	}
 
 	return img, nil
+}
+
+// writeRLEGrayRun writes a repeated grayscale value into logical destination rows.
+func writeRLEGrayRun(dst []byte, w, start, count int, value byte) {
+	for count > 0 {
+		x := start % w
+		y := start / w
+		chunk := min(count, w-x)
+		y = (len(dst)/w - 1) - y
+		row := dst[y*w+x : y*w+x+chunk]
+		row[0] = value
+		replicatePattern(row, 1)
+		start += chunk
+		count -= chunk
+	}
+}
+
+// writeRLEGrayRaw writes raw grayscale bytes into logical destination rows.
+func writeRLEGrayRaw(dst []byte, w, start int, src []byte) {
+	for len(src) > 0 {
+		x := start % w
+		y := start / w
+		chunk := min(len(src), w-x)
+		y = (len(dst)/w - 1) - y
+		copy(dst[y*w+x:y*w+x+chunk], src[:chunk])
+		start += chunk
+		src = src[chunk:]
+	}
+}
+
+// writeRLETrueColorRun writes a repeated converted pixel into logical rows.
+func writeRLETrueColorRun(dst []byte, w, start, count int, r, g, b, a byte) {
+	pixel := [4]byte{r, g, b, a}
+	for count > 0 {
+		x := start % w
+		y := start / w
+		chunk := min(count, w-x)
+		y = (len(dst)/(w*4) - 1) - y
+		row := dst[(y*w+x)*4 : (y*w+x+chunk)*4]
+		copy(row[:4], pixel[:])
+		replicatePattern(row, 4)
+		start += chunk
+		count -= chunk
+	}
+}
+
+// writeRLETrueColorRaw converts raw pixels into logical destination rows.
+func writeRLETrueColorRaw(dst []byte, w, start int, src []byte, count, depth int, hasAlpha bool) {
+	bytesPerPixel := (depth + 7) / 8
+	srcOffset := 0
+	for count > 0 {
+		x := start % w
+		y := start / w
+		chunk := min(count, w-x)
+		y = (len(dst)/(w*4) - 1) - y
+		dstOffset := (y*w + x) * 4
+		srcEnd := srcOffset + chunk*bytesPerPixel
+		convertBufferToNRGBA(dst[dstOffset:], src[srcOffset:srcEnd], chunk, depth, hasAlpha)
+		start += chunk
+		count -= chunk
+		srcOffset = srcEnd
+	}
 }
 
 // decodeRLEPaletted decodes RLE-compressed color-mapped image data.
@@ -718,7 +792,6 @@ func decodeRLEPaletted(
 		return nil, err
 	}
 	pixelsRead := 0
-	outIdx := 0
 	rawBuf := make([]byte, 128)
 
 	// Decode RLE packets
@@ -747,38 +820,89 @@ func decodeRLEPaletted(
 				return nil, err
 			}
 
-			dst := outPix[outIdx : outIdx+count]
-			dst[0] = val
-			replicatePattern(dst, 1)
-			outIdx += count
+			if flipY {
+				writeRLEPaletteRun(outPix, w, pixelsRead, count, val)
+			} else {
+				dst := outPix[pixelsRead : pixelsRead+count]
+				dst[0] = val
+				replicatePattern(dst, 1)
+			}
 		} else {
 			buf := rawBuf[:count]
 			if _, err := io.ReadFull(r, buf); err != nil {
 				return nil, err
 			}
 
-			if err := normalizePaletteIndices(
-				outPix[outIdx:outIdx+count],
+			if flipY {
+				if err := writeRLEPaletteRaw(
+					outPix,
+					w,
+					pixelsRead,
+					buf,
+					colorMapStart,
+					colorMapLen,
+				); err != nil {
+					return nil, err
+				}
+			} else if err := normalizePaletteIndices(
+				outPix[pixelsRead:pixelsRead+count],
 				buf,
 				colorMapStart,
 				colorMapLen,
 			); err != nil {
 				return nil, err
 			}
-
-			outIdx += count
 		}
 		pixelsRead += count
 	}
 
-	if flipY {
-		flipImageVertically(img, w, h)
-	}
 	if flipX {
 		flipImageHorizontally(img, w, h)
 	}
 
 	return img, nil
+}
+
+// writeRLEPaletteRun writes a normalized palette index into logical rows.
+func writeRLEPaletteRun(dst []byte, w, start, count int, value byte) {
+	for count > 0 {
+		x := start % w
+		y := start / w
+		chunk := min(count, w-x)
+		y = (len(dst)/w - 1) - y
+		row := dst[y*w+x : y*w+x+chunk]
+		row[0] = value
+		replicatePattern(row, 1)
+		start += chunk
+		count -= chunk
+	}
+}
+
+// writeRLEPaletteRaw validates and writes raw palette indices into logical rows.
+func writeRLEPaletteRaw(dst []byte, w, start int, src []byte, colorMapStart, colorMapLen int) error {
+	srcOffset := 0
+	for len(src) > 0 {
+		x := start % w
+		y := start / w
+		chunk := min(len(src), w-x)
+		y = (len(dst)/w - 1) - y
+		row := dst[y*w+x : y*w+x+chunk]
+
+		for i := range chunk {
+			value, err := normalizePaletteIndex(src[srcOffset+i], colorMapStart, colorMapLen)
+			if err != nil {
+				return err
+			}
+
+			row[i] = value
+		}
+
+		start += chunk
+		srcOffset += chunk
+		src = src[chunk:]
+	}
+
+	return nil
 }
 
 // normalizePaletteIndices validates TGA color-map indices and converts them to local palette indices.

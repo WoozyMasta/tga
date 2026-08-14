@@ -379,6 +379,45 @@ func TestDecode_RLETrueColor24(t *testing.T) {
 	}
 }
 
+func TestDecode_RLECrossesRowsWithBottomOrigin(t *testing.T) {
+	header := [18]byte{
+		0, 0, typeRLETrueColor,
+		0, 0, 0, 0, 0,
+		0, 0, 0, 0,
+		2, 0, 2, 0,
+		24, 0,
+	}
+	// One raw packet crosses the bottom-origin scanline boundary.
+	// TGA stores red/green in the bottom row, followed by blue/white in the top row.
+	payload := []byte{
+		0x03,
+		0, 0, 255,
+		0, 255, 0,
+		255, 0, 0,
+		255, 255, 255,
+	}
+
+	img, err := Decode(bytes.NewReader(append(header[:], payload...)))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	nrgba, ok := img.(*image.NRGBA)
+	if !ok {
+		t.Fatalf("expected *image.NRGBA, got %T", img)
+	}
+	want := [2][2]color.NRGBA{
+		{{R: 0, G: 0, B: 255, A: 255}, {R: 255, G: 255, B: 255, A: 255}},
+		{{R: 255, G: 0, B: 0, A: 255}, {R: 0, G: 255, B: 0, A: 255}},
+	}
+	for y := range want {
+		for x := range want[y] {
+			if got := nrgba.NRGBAAt(x, y); got != want[y][x] {
+				t.Fatalf("pixel (%d,%d)=%+v, want=%+v", x, y, got, want[y][x])
+			}
+		}
+	}
+}
+
 func TestDecode_RLEGrayscale8(t *testing.T) {
 	header := [18]byte{
 		0, 0, 11,

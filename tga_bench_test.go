@@ -104,6 +104,36 @@ func BenchmarkDecode(b *testing.B) {
 	}
 }
 
+// BenchmarkDecodeRLEBottomOrigin measures the RLE path that writes logical rows directly
+// instead of decoding linearly and vertically flipping the frame.
+func BenchmarkDecodeRLEBottomOrigin(b *testing.B) {
+	for _, sz := range benchSizes {
+		for _, k := range benchKinds {
+			img := k.build(sz.w, sz.h)
+			var buf bytes.Buffer
+			if err := EncodeWithOptions(&buf, img, &EncodeOptions{
+				PixelDepth:   k.depth,
+				RLE:          true,
+				OriginBottom: true,
+			}); err != nil {
+				b.Fatalf("encode %s/%s: %v", sz.name, k.name, err)
+			}
+			data := buf.Bytes()
+
+			b.Run(sz.name+"/"+k.name, func(b *testing.B) {
+				r := bytes.NewReader(data)
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					r.Reset(data)
+					if _, err := Decode(r); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
 // BenchmarkEncode covers Encode over {size} x {kind/depth} x {RLE on/off}.
 func BenchmarkEncode(b *testing.B) {
 	for _, sz := range benchSizes {
