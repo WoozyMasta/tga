@@ -76,7 +76,11 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 	case typeTrueColor, typeRLETrueColor:
 		cm = color.NRGBAModel
 	case typeGrayscale, typeRLEGrayscale:
-		cm = color.GrayModel
+		if header.pixelDepth == 16 {
+			cm = color.NRGBAModel
+		} else {
+			cm = color.GrayModel
+		}
 	case typePaletted, typeRLEPaletted:
 		cm = color.Palette{}
 	}
@@ -168,7 +172,7 @@ func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
 	flipX := header.descriptor&maskOriginRight != 0
 
 	switch header.imageType {
-	case typeTrueColor, typeGrayscale:
+	case typeTrueColor:
 		return decodeUncompressed(
 			br,
 			header.width,
@@ -179,7 +183,13 @@ func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
 			flipY,
 		)
 
-	case typeRLETrueColor, typeRLEGrayscale:
+	case typeGrayscale:
+		if header.pixelDepth == 16 {
+			return decodeGray16(br, header.width, header.height, flipX, flipY)
+		}
+		return decodeUncompressed(br, header.width, header.height, header.pixelDepth, false, flipX, flipY)
+
+	case typeRLETrueColor:
 		return decodeRLE(
 			br,
 			header.width,
@@ -189,6 +199,12 @@ func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
 			flipX,
 			flipY,
 		)
+
+	case typeRLEGrayscale:
+		if header.pixelDepth == 16 {
+			return decodeRLEGray16(br, header.width, header.height, flipX, flipY)
+		}
+		return decodeRLE(br, header.width, header.height, header.pixelDepth, false, flipX, flipY)
 
 	case typePaletted:
 		return decodeUncompressedPaletted(
@@ -237,8 +253,12 @@ func validateDecodeSize(header parsedHeader, opts DecodeOptions) error {
 
 	bytesPerPixel := 4
 	switch header.imageType {
-	case typeGrayscale, typeRLEGrayscale, typePaletted, typeRLEPaletted:
+	case typePaletted, typeRLEPaletted:
 		bytesPerPixel = 1
+	case typeGrayscale, typeRLEGrayscale:
+		if header.pixelDepth == 8 {
+			bytesPerPixel = 1
+		}
 	}
 
 	decodedBytes, err := checkedMul(pixels, bytesPerPixel)
@@ -330,7 +350,7 @@ func validateImageSpec(imgType uint8, pixelDepth int, hasCMap bool, cMapLen int)
 		}
 
 	case typeGrayscale, typeRLEGrayscale:
-		if pixelDepth != 8 {
+		if pixelDepth != 8 && pixelDepth != 16 {
 			return ErrUnsupported
 		}
 		if hasCMap {
@@ -430,6 +450,90 @@ func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipX, flipY boo
 	}
 
 	return nrgba, nil
+}
+
+// decodeGray16 decodes luminance/alpha pairs into straight-alpha NRGBA pixels.
+func decodeGray16(r io.Reader, w, h int, flipX, flipY bool) (image.Image, error) {
+	rowSize, err := checkedMul(w, 2)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := checkedMul(w, h); err != nil {
+		return nil, err
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	row := make([]byte, rowSize)
+
+	for y := range h {
+		if _, err := io.ReadFull(r, row); err != nil {
+			return nil, err
+		}
+
+		dstY := y
+		if flipY {
+			dstY = h - 1 - y
+		}
+
+		dst := img.Pix[dstY*img.Stride:]
+		// TGA Gray16 stores one luminance byte followed by one alpha byte.
+		for x := range w {
+			l, a := row[x*2], row[x*2+1]
+			dst[x*4], dst[x*4+1], dst[x*4+2], dst[x*4+3] = l, l, l, a
+		}
+	}
+
+	if flipX {
+		flipImageHorizontally(img, w, h)
+	}
+
+	return img, nil
+}
+
+// decodeRLEGray16 decodes RLE luminance/alpha pairs into straight-alpha NRGBA pixels.
+func decodeRLEGray16(r *bufio.Reader, w, h int, flipX, flipY bool) (image.Image, error) {
+	total, err := checkedMul(w, h)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := checkedMul(total, 4); err != nil {
+		return nil, err
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	pixel := make([]byte, 2)
+	out := 0
+
+	for out < total {
+		head, err := r.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+
+		count := int(head&0x7f) + 1
+		if out+count > total {
+			return nil, ErrRLEOverrun
+		}
+
+		// Raw packets read one pair per pixel; RLE packets reuse their first pair.
+		for n := range count {
+			if head&0x80 == 0 || n == 0 {
+				if _, err := io.ReadFull(r, pixel); err != nil {
+					return nil, err
+				}
+			}
+			i := out * 4
+			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = pixel[0], pixel[0], pixel[0], pixel[1]
+			out++
+		}
+	}
+
+	if flipY {
+		flipImageVertically(img, w, h)
+	}
+	if flipX {
+		flipImageHorizontally(img, w, h)
+	}
+
+	return img, nil
 }
 
 // decodeUncompressedPaletted reads uncompressed color-mapped image data.

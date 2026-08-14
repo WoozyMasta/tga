@@ -420,6 +420,59 @@ func TestDecode_RLEGrayscale8(t *testing.T) {
 	}
 }
 
+func TestDecode_Gray16Alpha(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		rle  bool
+		data []byte
+	}{
+		{name: "raw", data: []byte{10, 20, 30, 40}},
+		{name: "rle", rle: true, data: []byte{0x01, 10, 20, 30, 40}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			typ := byte(typeGrayscale)
+			if tt.rle {
+				typ = typeRLEGrayscale
+			}
+			header := []byte{0, 0, typ, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 16, maskOriginTop}
+			img, err := Decode(bytes.NewReader(append(header, tt.data...)))
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			got := img.(*image.NRGBA)
+			if got.NRGBAAt(0, 0) != (color.NRGBA{R: 10, G: 10, B: 10, A: 20}) || got.NRGBAAt(1, 0) != (color.NRGBA{R: 30, G: 30, B: 30, A: 40}) {
+				t.Fatalf("pixels = %v %v", got.NRGBAAt(0, 0), got.NRGBAAt(1, 0))
+			}
+		})
+	}
+}
+
+func TestDecode_Gray16AlphaOriginAndDepth(t *testing.T) {
+	header := []byte{0, 0, typeGrayscale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 16, maskOriginTop | maskOriginRight}
+	img, err := Decode(bytes.NewReader(append(header, 30, 40, 10, 20)))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	got := img.(*image.NRGBA)
+	if got.NRGBAAt(0, 0) != (color.NRGBA{R: 10, G: 10, B: 10, A: 20}) {
+		t.Fatalf("left pixel = %+v", got.NRGBAAt(0, 0))
+	}
+	for _, depth := range []byte{15, 24, 32} {
+		header[16] = depth
+		if _, err := Decode(bytes.NewReader(header)); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("depth %d error = %v", depth, err)
+		}
+	}
+}
+
+func TestDecodeWithOptions_Gray16AlphaLimit(t *testing.T) {
+	header := []byte{0, 0, typeGrayscale, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 16, maskOriginTop}
+	_, err := DecodeWithOptions(bytes.NewReader(header), DecodeOptions{MaxDecodedBytes: 7})
+	if !errors.Is(err, ErrResourceLimit) {
+		t.Fatalf("DecodeWithOptions error = %v, want ErrResourceLimit", err)
+	}
+}
+
 func TestDecode_RLEPaletted8(t *testing.T) {
 	header := [18]byte{
 		0, 1, 9,

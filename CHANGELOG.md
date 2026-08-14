@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning][].
 ### Added
 
 * `DecodeWithOptions` for opt-in pixel and decoded-memory limits.
+* 16-bit grayscale+alpha decoding for raw and RLE TGA images.
 
 ### Fixed
 
