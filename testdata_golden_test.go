@@ -74,7 +74,7 @@ func makeGoldenPaletted(w, h int) *image.Paletted {
 	return img
 }
 
-// quantizeTo16Bit applies RGB555 quantization used by 16-bit TGA.
+// quantizeTo16Bit applies A1R5G5B5 quantization used by the 16-bit fixture.
 func quantizeTo16Bit(src *image.NRGBA) *image.NRGBA {
 	b := src.Bounds()
 	dst := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
@@ -82,7 +82,7 @@ func quantizeTo16Bit(src *image.NRGBA) *image.NRGBA {
 		for x := b.Min.X; x < b.Max.X; x++ {
 			c := src.NRGBAAt(x, y)
 			v := encodeRGB555(c.R, c.G, c.B, c.A)
-			q := decodeRGB555(v)
+			q := decode16BitTrueColor(v, true)
 			dst.SetNRGBA(x-b.Min.X, y-b.Min.Y, q)
 		}
 	}

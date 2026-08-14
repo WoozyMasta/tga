@@ -97,6 +97,7 @@ func Decode(r io.Reader) (image.Image, error) {
 	height := int(header[14]) | int(header[15])<<8
 	pixelDepth := int(header[16])
 	desc := header[17]
+	hasAlpha := pixelDepth == 16 && desc&0x0f == 1
 
 	if width == 0 || height == 0 {
 		return nil, ErrFormat
@@ -178,13 +179,17 @@ func Decode(r io.Reader) (image.Image, error) {
 
 	switch imgType {
 	case typeTrueColor, typeGrayscale:
-		return decodeUncompressed(br, width, height, pixelDepth, flipY)
+		return decodeUncompressed(br, width, height, pixelDepth, hasAlpha, flipY)
+
 	case typeRLETrueColor, typeRLEGrayscale:
-		return decodeRLE(br, width, height, pixelDepth, flipY)
+		return decodeRLE(br, width, height, pixelDepth, hasAlpha, flipY)
+
 	case typePaletted:
 		return decodeUncompressedPaletted(br, width, height, pixelDepth, flipY, palette)
+
 	case typeRLEPaletted:
 		return decodeRLEPaletted(br, width, height, pixelDepth, flipY, palette)
+
 	default:
 		return nil, ErrUnsupported
 	}
@@ -230,7 +235,7 @@ func isTrueColorDepth(pixelDepth int) bool {
 }
 
 // decodeUncompressed reads uncompressed true-color or grayscale image data.
-func decodeUncompressed(r io.Reader, w, h, depth int, flipY bool) (image.Image, error) {
+func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipY bool) (image.Image, error) {
 	bytesPerPixel := (depth + 7) / 8
 	rowSize := w * bytesPerPixel
 
@@ -270,7 +275,7 @@ func decodeUncompressed(r io.Reader, w, h, depth int, flipY bool) (image.Image, 
 		}
 
 		destOffset := destY * nrgba.Stride
-		convertRowToNRGBA(nrgba.Pix[destOffset:destOffset+w*4], rowBuf, w, depth)
+		convertRowToNRGBA(nrgba.Pix[destOffset:destOffset+w*4], rowBuf, w, depth, hasAlpha)
 	}
 
 	return nrgba, nil
@@ -304,7 +309,7 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipY bool, pal co
 
 // decodeRLE decodes RLE-compressed true-color or grayscale data.
 // RLE packets may cross scan lines; we decode linearly then flip if needed.
-func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error) {
+func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipY bool) (image.Image, error) {
 	bytesPerPixel := (depth + 7) / 8
 	totalPixels := w * h
 
@@ -358,10 +363,15 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 				switch depth {
 				case 24:
 					bv, gv, rv, av = pixelBuf[0], pixelBuf[1], pixelBuf[2], 0xff
+
 				case 32:
 					bv, gv, rv, av = pixelBuf[0], pixelBuf[1], pixelBuf[2], pixelBuf[3]
+
 				case 15, 16:
-					c := decodeRGB555(uint16(pixelBuf[0]) | uint16(pixelBuf[1])<<8)
+					c := decode16BitTrueColor(
+						uint16(pixelBuf[0])|uint16(pixelBuf[1])<<8,
+						hasAlpha,
+					)
 					rv, gv, bv, av = c.R, c.G, c.B, c.A
 				}
 
@@ -386,7 +396,7 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, flipY bool) (image.Image, error
 					return nil, err
 				}
 
-				convertBufferToNRGBA(outPix[outIdx:], buf, count, depth)
+				convertBufferToNRGBA(outPix[outIdx:], buf, count, depth, hasAlpha)
 				outIdx += count * 4
 			}
 		}
@@ -455,7 +465,7 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipY bool, pal color.P
 
 // convertRowToNRGBA converts one row of TGA BGR/BGRA bytes to NRGBA (RGBA).
 // dst must have length w*4.
-func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
+func convertRowToNRGBA(dst []byte, src []byte, w int, depth int, hasAlpha bool) {
 	switch depth {
 	case 24:
 		simd.BGRToRGBA(dst[:w*4], src[:w*3])
@@ -464,16 +474,16 @@ func convertRowToNRGBA(dst []byte, src []byte, w int, depth int) {
 		simd.SwapRB32(dst[:w*4], src[:w*4])
 
 	case 15, 16:
-		convertRow16ToNRGBA(dst[:w*4], src[:w*2])
+		convertRow16ToNRGBA(dst[:w*4], src[:w*2], hasAlpha)
 	}
 }
 
 // convertRow16ToNRGBA converts one 15/16-bit BGR555 row to 32-bit RGBA.
-func convertRow16ToNRGBA(dst []byte, src []byte) {
+func convertRow16ToNRGBA(dst []byte, src []byte, hasAlpha bool) {
 	di := 0
 	for si := 0; si < len(src); si += 2 {
 		v := uint16(src[si]) | uint16(src[si+1])<<8
-		c := decodeRGB555(v)
+		c := decode16BitTrueColor(v, hasAlpha)
 		dst[di+0] = c.R
 		dst[di+1] = c.G
 		dst[di+2] = c.B
@@ -483,8 +493,18 @@ func convertRow16ToNRGBA(dst []byte, src []byte) {
 }
 
 // convertBufferToNRGBA converts a chunk of TGA pixel bytes to NRGBA (used by RLE raw packets).
-func convertBufferToNRGBA(dst []byte, src []byte, count int, depth int) {
-	convertRowToNRGBA(dst, src, count, depth)
+func convertBufferToNRGBA(dst []byte, src []byte, count int, depth int, hasAlpha bool) {
+	convertRowToNRGBA(dst, src, count, depth, hasAlpha)
+}
+
+// decode16BitTrueColor decodes a 15-bit RGB555 or 16-bit A1R5G5B5 pixel.
+func decode16BitTrueColor(v uint16, hasAlpha bool) color.NRGBA {
+	c := decodeRGB555(v)
+	if hasAlpha && v&(1<<15) == 0 {
+		c.A = 0
+	}
+
+	return c
 }
 
 // decodeRGB555 converts a 16-bit word (ARRRRRGGGGGBBBBB) to NRGBA.

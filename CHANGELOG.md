@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## Unreleased
+
+### Fixed
+
+* 16-bit true-color decoding now preserves the A1R5G5B5 alpha bit
+  when the image descriptor declares one attribute bit;
+  15-bit RGB555 remains opaque.
+
 ## [1.2.0][] - 2026-06-17
 
 ### Added

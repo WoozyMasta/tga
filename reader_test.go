@@ -334,6 +334,79 @@ func TestDecodeRGB555(t *testing.T) {
 	}
 }
 
+func TestDecode_TrueColor16AlphaRoundTrip(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 255, G: 64, B: 32, A: 0})
+	src.SetNRGBA(1, 0, color.NRGBA{R: 32, G: 128, B: 255, A: 255})
+	src.SetNRGBA(0, 1, color.NRGBA{R: 96, G: 192, B: 16, A: 0})
+	src.SetNRGBA(1, 1, color.NRGBA{R: 224, G: 16, B: 160, A: 255})
+
+	for _, tt := range []struct {
+		name         string
+		rle          bool
+		originBottom bool
+	}{
+		{name: "raw_top"},
+		{name: "raw_bottom", originBottom: true},
+		{name: "rle_top", rle: true},
+		{name: "rle_bottom", rle: true, originBottom: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := EncodeWithOptions(&buf, src, &EncodeOptions{
+				PixelDepth:   16,
+				RLE:          tt.rle,
+				OriginBottom: tt.originBottom,
+			})
+			if err != nil {
+				t.Fatalf("EncodeWithOptions: %v", err)
+			}
+
+			data := buf.Bytes()
+			if data[17]&0x0f != 1 {
+				t.Fatalf("descriptor alpha bits=%d, want 1", data[17]&0x0f)
+			}
+
+			decoded, err := Decode(bytes.NewReader(data))
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			got := decoded.(*image.NRGBA)
+			for y := range 2 {
+				for x := range 2 {
+					wantSrc := src.NRGBAAt(x, y)
+					want := decode16BitTrueColor(
+						encodeRGB555(wantSrc.R, wantSrc.G, wantSrc.B, wantSrc.A),
+						true,
+					)
+					if actual := got.NRGBAAt(x, y); actual != want {
+						t.Fatalf("pixel (%d,%d) = %+v, want %+v", x, y, actual, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDecode_TrueColor15IgnoresHighBitForAlpha(t *testing.T) {
+	data := [20]byte{
+		0, 0, typeTrueColor,
+		0, 0, 0, 0, 0,
+		0, 0, 0, 0,
+		1, 0, 1, 0,
+		15, maskOriginTop,
+		0x1f, 0x80,
+	}
+
+	decoded, err := Decode(bytes.NewReader(data[:]))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got := decoded.(*image.NRGBA).NRGBAAt(0, 0); got != (color.NRGBA{B: 255, A: 255}) {
+		t.Fatalf("pixel = %+v, want opaque blue", got)
+	}
+}
+
 func TestEncodeDecodeRoundTrip(t *testing.T) {
 	// Create small NRGBA, encode to buffer, decode, compare bounds and a pixel
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
