@@ -404,7 +404,6 @@ func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipX, flipY boo
 
 	if depth == 8 {
 		gray := image.NewGray(image.Rect(0, 0, w, h))
-		rowBuf := make([]byte, rowSize)
 
 		for y := range h {
 			destY := y
@@ -414,11 +413,10 @@ func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipX, flipY boo
 
 			destOffset := destY * gray.Stride
 
-			if _, err := io.ReadFull(r, rowBuf); err != nil {
+			row := gray.Pix[destOffset : destOffset+rowSize]
+			if _, err := io.ReadFull(r, row); err != nil {
 				return nil, err
 			}
-
-			copy(gray.Pix[destOffset:destOffset+w], rowBuf)
 		}
 
 		if flipX {
@@ -547,7 +545,6 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool,
 
 	img := image.NewPaletted(image.Rect(0, 0, w, h), pal)
 	stride := img.Stride
-	rowBuf := make([]byte, w)
 
 	for y := range h {
 		destY := y
@@ -555,13 +552,14 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool,
 			destY = h - 1 - y
 		}
 		destOffset := destY * stride
+		row := img.Pix[destOffset : destOffset+w]
 
-		if _, err := io.ReadFull(r, rowBuf); err != nil {
+		if _, err := io.ReadFull(r, row); err != nil {
 			return nil, err
 		}
 		if err := normalizePaletteIndices(
-			img.Pix[destOffset:destOffset+w],
-			rowBuf,
+			row,
+			row,
 			colorMapStart,
 			colorMapLen,
 		); err != nil {

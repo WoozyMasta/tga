@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Raw grayscale and paletted decoding now reads directly
+  into final pixel storage, removing temporary per-row buffers.
 * Encoder depth options are now validated only for applicable image modes;
   irrelevant `PixelDepth` and `ColorMapDepth` values are ignored.
 * TGA 2.0 metadata encoding now validates fixed-width fields,
