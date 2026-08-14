@@ -234,6 +234,8 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 		return writeTGA2TailIfNeeded(cw, meta)
 
 	default:
+		// Convert arbitrary image.Image once to a canonical straight-alpha
+		// representation before choosing the true-color packing path.
 		if settings.RLE {
 			header[2] = typeRLETrueColor
 		} else {
@@ -370,6 +372,8 @@ func resolveTrueColorDepth(pixelDepth int) (int, error) {
 // resolveColorMapDepth validates and resolves palette entry depth.
 func resolveColorMapDepth(cMapDepth int, pal color.Palette) (int, error) {
 	if cMapDepth == 0 {
+		// TGA palette depth is selected from actual palette alpha,
+		// preserving alpha only when at least one entry needs it.
 		for _, c := range pal {
 			_, _, _, a := c.RGBA()
 			if a != 0xffff {
@@ -699,6 +703,8 @@ func encodeRLEPackets(w io.Writer, packed []byte, bytesPerPixel int, header []by
 		for rawLen < 128 && i < totalPixels {
 			runLen = findRunLength(packed, bytesPerPixel, i, totalPixels)
 			if runLen > 1 {
+				// Leave a repeated run for the next iteration
+				// so it gets its own RLE packet instead of being hidden inside a raw packet.
 				break
 			}
 

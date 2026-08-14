@@ -120,6 +120,9 @@ func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
 
 	var palette color.Palette
 	if header.hasColorMap {
+		// image.Paletted uses zero-based indices,
+		// so TGA's ColorMapFirst is applied while decoding pixels
+		// rather than by padding the palette.
 		entryBytes := (int(header.colorMapDepth) + 7) / 8
 		paletteBytes, err := checkedMul(header.colorMapLen, entryBytes)
 		if err != nil {
@@ -159,7 +162,8 @@ func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
 		}
 	}
 
-	// Go uses a top-left origin.
+	// TGA stores pixels from the descriptor-selected corner; normalize all
+	// supported origins to Go's top-left coordinate system after decoding.
 	flipY := (header.descriptor & maskOriginTop) == 0
 	flipX := header.descriptor&maskOriginRight != 0
 
@@ -219,6 +223,8 @@ func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
 
 // validateDecodeSize checks decoded image allocation size and configured resource limits.
 func validateDecodeSize(header parsedHeader, opts DecodeOptions) error {
+	// Validate the final image allocation, not the compressed input length:
+	// a tiny RLE stream can expand to a large image.
 	pixels, err := checkedMul(header.width, header.height)
 	if err != nil {
 		return err
@@ -280,6 +286,8 @@ func parseHeader(raw [headerSize]byte) (parsedHeader, error) {
 	case 1:
 		header.hasColorMap = true
 	default:
+		// Only 0 and 1 are defined;
+		// treating other values as "no map" would silently reinterpret malformed indexed images.
 		return parsedHeader{}, ErrFormat
 	}
 
@@ -509,6 +517,7 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 		packetType := packetHeader & 0x80
 		count := int(packetHeader&0x7F) + 1
 
+		// Packets are allowed to cross rows, but never the declared image end.
 		if pixelsRead+count > totalPixels {
 			return nil, ErrRLEOverrun
 		}
@@ -620,6 +629,7 @@ func decodeRLEPaletted(
 		packetType := packetHeader & 0x80
 		count := int(packetHeader&0x7F) + 1
 
+		// Palette packets share the same linear stream semantics as true color.
 		if pixelsRead+count > totalPixels {
 			return nil, ErrRLEOverrun
 		}
