@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/tga
+
 package tga
 
 import (
@@ -82,9 +86,9 @@ func TestEncodeWithOptions_TGA2MetadataWritesFooterAndAreas(t *testing.T) {
 	day := binary.LittleEndian.Uint16(ext[tga2OffTimestamp+2 : tga2OffTimestamp+4])
 	year := binary.LittleEndian.Uint16(ext[tga2OffTimestamp+4 : tga2OffTimestamp+6])
 	hour := binary.LittleEndian.Uint16(ext[tga2OffTimestamp+6 : tga2OffTimestamp+8])
-	min := binary.LittleEndian.Uint16(ext[tga2OffTimestamp+8 : tga2OffTimestamp+10])
+	minute := binary.LittleEndian.Uint16(ext[tga2OffTimestamp+8 : tga2OffTimestamp+10])
 	sec := binary.LittleEndian.Uint16(ext[tga2OffTimestamp+10 : tga2OffTimestamp+12])
-	if mon != 3 || day != 16 || year != 2026 || hour != 14 || min != 5 || sec != 9 {
+	if mon != 3 || day != 16 || year != 2026 || hour != 14 || minute != 5 || sec != 9 {
 		t.Fatalf("timestamp fields mismatch")
 	}
 

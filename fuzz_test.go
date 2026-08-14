@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/tga
+
 package tga
 
 import (
@@ -54,7 +58,7 @@ func addTGASeeds(f *testing.F) {
 // being parsed and validated.
 func FuzzParseHeader(f *testing.F) {
 	f.Add(makeRawTGA24(1, 1, true)[:headerSize])
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		var raw [headerSize]byte
 		copy(raw[:], data)
 		_, _ = parseHeader(raw)
@@ -66,7 +70,7 @@ func FuzzParseHeader(f *testing.F) {
 func FuzzPaletteIndex(f *testing.F) {
 	f.Add(byte(0), uint8(0), uint8(1))
 	f.Add(byte(255), uint8(255), uint8(1))
-	f.Fuzz(func(t *testing.T, index byte, start, length uint8) {
+	f.Fuzz(func(_ *testing.T, index byte, start, length uint8) {
 		_, _ = normalizePaletteIndex(index, int(start), int(length))
 	})
 }
@@ -75,7 +79,7 @@ func FuzzPaletteIndex(f *testing.F) {
 // parsing with the same bounded input used by the ordinary decoder fuzzer.
 func FuzzDecodeWithMetadata(f *testing.F) {
 	addTGASeeds(f)
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(_ *testing.T, data []byte) {
 		if len(data) > 1<<20 || declaredPixels(data) > maxFuzzPixels {
 			return
 		}

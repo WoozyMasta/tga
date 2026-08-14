@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WoozyMasta
+// Source: github.com/woozymasta/tga
+
 package tga
 
 import (
@@ -632,7 +636,7 @@ func makePalettedTGA(first, length int, depth byte, palette, indices []byte, rle
 		payload = append([]byte{byte(len(indices) - 1)}, payload...)
 	}
 
-	data := append(header, palette...)
+	data := append(append([]byte(nil), header...), palette...)
 	return append(data, payload...)
 }
 
@@ -845,9 +849,9 @@ func imagesEqual(a, b image.Image) bool {
 	for y := ba.Min.Y; y < ba.Max.Y; y++ {
 		for x := ba.Min.X; x < ba.Max.X; x++ {
 			ca, cb := a.At(x, y), b.At(x, y)
-			ra, ga, ba_, aa := ca.RGBA()
-			rb, gb, bb_, ab := cb.RGBA()
-			if ra != rb || ga != gb || ba_ != bb_ || aa != ab {
+			ra, ga, ba, aa := ca.RGBA()
+			rb, gb, bb, ab := cb.RGBA()
+			if ra != rb || ga != gb || ba != bb || aa != ab {
 				return false
 			}
 		}
