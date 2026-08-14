@@ -2,6 +2,7 @@ package tga
 
 import (
 	"bytes"
+	"image"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,6 +30,9 @@ func declaredPixels(data []byte) int {
 func addTGASeeds(f *testing.F) {
 	f.Add(makeRawTGA24(2, 2, true))
 	f.Add(makeRawTGA24(4, 4, false))
+	f.Add(makeConformanceTrueColor(16, true, maskOriginTop|maskOriginRight))
+	f.Add(makeConformanceGray(16, true, maskOriginTop))
+	f.Add(makeConformancePaletted(true, maskOriginRight))
 
 	entries, err := os.ReadDir("testdata")
 	if err != nil {
@@ -44,6 +48,68 @@ func addTGASeeds(f *testing.F) {
 		}
 		f.Add(data)
 	}
+}
+
+// FuzzParseHeader asserts that arbitrary fixed-size headers never panic while
+// being parsed and validated.
+func FuzzParseHeader(f *testing.F) {
+	f.Add(makeRawTGA24(1, 1, true)[:headerSize])
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var raw [headerSize]byte
+		copy(raw[:], data)
+		_, _ = parseHeader(raw)
+	})
+}
+
+// FuzzPaletteIndex checks the normalization boundary for arbitrary palette
+// origins and lengths without allocating a decoded image.
+func FuzzPaletteIndex(f *testing.F) {
+	f.Add(byte(0), uint8(0), uint8(1))
+	f.Add(byte(255), uint8(255), uint8(1))
+	f.Fuzz(func(t *testing.T, index byte, start, length uint8) {
+		_, _ = normalizePaletteIndex(index, int(start), int(length))
+	})
+}
+
+// FuzzDecodeWithMetadata exercises footer, offset, extension, and thumbnail
+// parsing with the same bounded input used by the ordinary decoder fuzzer.
+func FuzzDecodeWithMetadata(f *testing.F) {
+	addTGASeeds(f)
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<20 {
+			t.Skip()
+		}
+		_, _, _ = DecodeWithMetadata(bytes.NewReader(data))
+	})
+}
+
+// FuzzRoundTripBounded generates small images from fuzz bytes and verifies that
+// encoding followed by decoding remains bounded and panic-free.
+func FuzzRoundTripBounded(f *testing.F) {
+	f.Add([]byte{4, 3, 17, 29, 41, 53})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 2 {
+			t.Skip()
+		}
+		w := int(data[0]%32) + 1
+		h := int(data[1]%32) + 1
+		img := image.NewNRGBA(image.Rect(0, 0, w, h))
+		for i := range img.Pix {
+			img.Pix[i] = data[(i+2)%len(data)]
+		}
+
+		var buf bytes.Buffer
+		if err := Encode(&buf, img); err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+		decoded, err := Decode(bytes.NewReader(buf.Bytes()))
+		if err != nil {
+			t.Fatalf("Decode encoded image: %v", err)
+		}
+		if decoded.Bounds().Dx() != w || decoded.Bounds().Dy() != h {
+			t.Fatalf("decoded bounds=%v, want %dx%d", decoded.Bounds(), w, h)
+		}
+	})
 }
 
 // FuzzDecode asserts that Decode never panics on arbitrary input,

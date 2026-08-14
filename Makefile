@@ -59,6 +59,10 @@ bench-reset:
 fuzz:
 	$(GO) test -run='^$$' -fuzz='^FuzzDecode$$' -fuzztime=$(FUZZ_TIME) .
 	$(GO) test -run='^$$' -fuzz='^FuzzDecodeConfig$$' -fuzztime=$(FUZZ_TIME) .
+	$(GO) test -run='^$$' -fuzz='^FuzzParseHeader$$' -fuzztime=$(FUZZ_TIME) .
+	$(GO) test -run='^$$' -fuzz='^FuzzPaletteIndex$$' -fuzztime=$(FUZZ_TIME) .
+	$(GO) test -run='^$$' -fuzz='^FuzzDecodeWithMetadata$$' -fuzztime=$(FUZZ_TIME) .
+	$(GO) test -run='^$$' -fuzz='^FuzzRoundTripBounded$$' -fuzztime=$(FUZZ_TIME) .
 
 .PHONY: download verify vet tidy tidy-check fmt fmt-check lint lint-fix align align-fix
 

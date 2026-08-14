@@ -18,7 +18,7 @@ jobs:
           go-version: '1.26'
 
       - name: Run CI
-        run: make ci test-race test-race-pure fuzz
+        run: make ci test-race test-race-pure fuzz FUZZ_TIME=10s
 
       - name: Extract changelog
         run: make release-notes > release.md
