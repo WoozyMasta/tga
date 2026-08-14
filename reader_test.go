@@ -46,6 +46,34 @@ func TestDecodeConfig(t *testing.T) {
 	}
 }
 
+func TestDecodeWithOptions_Limits(t *testing.T) {
+	data := makeRawTGA24(2, 2, true)
+
+	_, err := DecodeWithOptions(bytes.NewReader(data), DecodeOptions{MaxPixels: 3})
+	if !errors.Is(err, ErrResourceLimit) {
+		t.Fatalf("MaxPixels error = %v, want ErrResourceLimit", err)
+	}
+
+	_, err = DecodeWithOptions(bytes.NewReader(data), DecodeOptions{MaxDecodedBytes: 15})
+	if !errors.Is(err, ErrResourceLimit) {
+		t.Fatalf("MaxDecodedBytes error = %v, want ErrResourceLimit", err)
+	}
+
+	decoded, err := DecodeWithOptions(bytes.NewReader(data), DecodeOptions{})
+	if err != nil {
+		t.Fatalf("zero-value options: %v", err)
+	}
+	if !decoded.Bounds().Eq(image.Rect(0, 0, 2, 2)) {
+		t.Fatalf("bounds = %v, want 2x2", decoded.Bounds())
+	}
+}
+
+func TestCheckedMul(t *testing.T) {
+	if _, err := checkedMul(maxInt, 2); !errors.Is(err, ErrFormat) {
+		t.Fatalf("overflow error = %v, want ErrFormat", err)
+	}
+}
+
 func TestDecodeAndConfig_HeaderValidation(t *testing.T) {
 	validTrueColor := makeRawTGA24(1, 1, true)
 	validRLETrueColor := append([]byte{

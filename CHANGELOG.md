@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning][].
 
 ## Unreleased
 
+### Added
+
+* `DecodeWithOptions` for opt-in pixel and decoded-memory limits.
+
 ### Fixed
 
 * 16-bit true-color decoding now preserves the A1R5G5B5 alpha bit

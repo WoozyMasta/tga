@@ -28,6 +28,33 @@ const (
 	maskInterleave  = 0xc0 // Bits 6-7 of image descriptor: interleave mode.
 )
 
+const maxInt = int(^uint(0) >> 1)
+
+// DecodeOptions limits resources consumed by DecodeWithOptions.
+// A zero limit disables that limit.
+type DecodeOptions struct {
+	// MaxPixels limits the total decoded image pixels.
+	MaxPixels uint64
+	// MaxDecodedBytes limits storage for decoded pixels:
+	// four bytes per NRGBA pixel and one byte per Gray or Paletted pixel.
+	MaxDecodedBytes uint64
+}
+
+// parsedHeader is the validated fixed-size TGA image specification.
+type parsedHeader struct {
+	idLen         int   // idLen is the byte length of the image ID field following the header.
+	colorMapStart int   // colorMapStart is the first palette index declared by the color map.
+	colorMapLen   int   // colorMapLen is the number of entries declared by the color map.
+	width         int   // width is the image width in pixels.
+	height        int   // height is the image height in pixels.
+	pixelDepth    int   // pixelDepth is the bit depth of each encoded image pixel.
+	imageType     uint8 // imageType identifies the pixel encoding and compression mode.
+	colorMapDepth uint8 // colorMapDepth is the bit depth of each color-map entry.
+	descriptor    uint8 // descriptor contains alpha attributes and image origin bits.
+	hasColorMap   bool  // hasColorMap reports whether the header declares a color map.
+	hasAlpha      bool  // hasAlpha reports whether 16-bit pixels use an A1 alpha bit.
+}
+
 // RegisterFormat registers the TGA format with image.Decode and image.DecodeConfig.
 // Because TGA has no magic bytes, it does not play nicely with other formats
 // when image.Decode tries them in order; registration is disabled by default.
@@ -63,6 +90,15 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 
 // Decode reads a TGA image from r.
 func Decode(r io.Reader) (image.Image, error) {
+	return decode(r, DecodeOptions{})
+}
+
+// DecodeWithOptions reads a TGA image from r subject to opts resource limits.
+func DecodeWithOptions(r io.Reader, opts DecodeOptions) (image.Image, error) {
+	return decode(r, opts)
+}
+
+func decode(r io.Reader, opts DecodeOptions) (image.Image, error) {
 	br, ok := r.(*bufio.Reader)
 	if !ok {
 		br = bufio.NewReader(r)
@@ -70,6 +106,9 @@ func Decode(r io.Reader) (image.Image, error) {
 
 	header, err := readHeader(br)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateDecodeSize(header, opts); err != nil {
 		return nil, err
 	}
 
@@ -82,7 +121,11 @@ func Decode(r io.Reader) (image.Image, error) {
 	var palette color.Palette
 	if header.hasColorMap {
 		entryBytes := (int(header.colorMapDepth) + 7) / 8
-		rawPalette := make([]byte, header.colorMapLen*entryBytes)
+		paletteBytes, err := checkedMul(header.colorMapLen, entryBytes)
+		if err != nil {
+			return nil, err
+		}
+		rawPalette := make([]byte, paletteBytes)
 		if _, err := io.ReadFull(br, rawPalette); err != nil {
 			return nil, err
 		}
@@ -174,19 +217,35 @@ func Decode(r io.Reader) (image.Image, error) {
 	}
 }
 
-// parsedHeader is the validated fixed-size TGA image specification.
-type parsedHeader struct {
-	idLen         int   // idLen is the byte length of the image ID field following the header.
-	colorMapStart int   // colorMapStart is the first palette index declared by the color map.
-	colorMapLen   int   // colorMapLen is the number of entries declared by the color map.
-	width         int   // width is the image width in pixels.
-	height        int   // height is the image height in pixels.
-	pixelDepth    int   // pixelDepth is the bit depth of each encoded image pixel.
-	imageType     uint8 // imageType identifies the pixel encoding and compression mode.
-	colorMapDepth uint8 // colorMapDepth is the bit depth of each color-map entry.
-	descriptor    uint8 // descriptor contains alpha attributes and image origin bits.
-	hasColorMap   bool  // hasColorMap reports whether the header declares a color map.
-	hasAlpha      bool  // hasAlpha reports whether 16-bit pixels use an A1 alpha bit.
+// validateDecodeSize checks decoded image allocation size and configured resource limits.
+func validateDecodeSize(header parsedHeader, opts DecodeOptions) error {
+	pixels, err := checkedMul(header.width, header.height)
+	if err != nil {
+		return err
+	}
+
+	// #nosec G115 -- checkedMul returns a non-negative result.
+	if opts.MaxPixels > 0 && uint64(pixels) > opts.MaxPixels {
+		return ErrResourceLimit
+	}
+
+	bytesPerPixel := 4
+	switch header.imageType {
+	case typeGrayscale, typeRLEGrayscale, typePaletted, typeRLEPaletted:
+		bytesPerPixel = 1
+	}
+
+	decodedBytes, err := checkedMul(pixels, bytesPerPixel)
+	if err != nil {
+		return err
+	}
+
+	// #nosec G115 -- checkedMul returns a non-negative result.
+	if opts.MaxDecodedBytes > 0 && uint64(decodedBytes) > opts.MaxDecodedBytes {
+		return ErrResourceLimit
+	}
+
+	return nil
 }
 
 // readHeader reads, parses, and validates the fixed-size TGA header.
@@ -295,10 +354,25 @@ func isTrueColorDepth(pixelDepth int) bool {
 	}
 }
 
+// checkedMul multiplies non-negative native integers without overflow.
+func checkedMul(a, b int) (int, error) {
+	if a < 0 || b < 0 || (a != 0 && b > maxInt/a) {
+		return 0, ErrFormat
+	}
+
+	return a * b, nil
+}
+
 // decodeUncompressed reads uncompressed true-color or grayscale image data.
 func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (image.Image, error) {
 	bytesPerPixel := (depth + 7) / 8
-	rowSize := w * bytesPerPixel
+	rowSize, err := checkedMul(w, bytesPerPixel)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := checkedMul(w, h); err != nil {
+		return nil, err
+	}
 
 	if depth == 8 {
 		gray := image.NewGray(image.Rect(0, 0, w, h))
@@ -355,6 +429,9 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool,
 	if depth != 8 {
 		return nil, ErrUnsupported
 	}
+	if _, err := checkedMul(w, h); err != nil {
+		return nil, err
+	}
 
 	img := image.NewPaletted(image.Rect(0, 0, w, h), pal)
 	stride := img.Stride
@@ -391,7 +468,13 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool,
 // RLE packets may cross scan lines; we decode linearly then flip if needed.
 func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (image.Image, error) {
 	bytesPerPixel := (depth + 7) / 8
-	totalPixels := w * h
+	totalPixels, err := checkedMul(w, h)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := checkedMul(totalPixels, 4); err != nil {
+		return nil, err
+	}
 
 	var img image.Image
 	var outPix []byte
@@ -409,7 +492,11 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 	}
 
 	pixelBuf := make([]byte, bytesPerPixel)
-	rawBuf := make([]byte, 128*bytesPerPixel)
+	rawBufferSize, err := checkedMul(128, bytesPerPixel)
+	if err != nil {
+		return nil, err
+	}
+	rawBuf := make([]byte, rawBufferSize)
 	pixelsRead := 0
 	outIdx := 0
 
@@ -470,7 +557,10 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 
 				outIdx += count
 			} else {
-				rawLen := count * bytesPerPixel
+				rawLen, err := checkedMul(count, bytesPerPixel)
+				if err != nil {
+					return nil, err
+				}
 				buf := rawBuf[:rawLen]
 				if _, err := io.ReadFull(r, buf); err != nil {
 					return nil, err
@@ -506,9 +596,16 @@ func decodeRLEPaletted(
 		return nil, ErrUnsupported
 	}
 
+	if _, err := checkedMul(w, h); err != nil {
+		return nil, err
+	}
+
 	img := image.NewPaletted(image.Rect(0, 0, w, h), pal)
 	outPix := img.Pix
-	totalPixels := w * h
+	totalPixels, err := checkedMul(w, h)
+	if err != nil {
+		return nil, err
+	}
 	pixelsRead := 0
 	outIdx := 0
 	rawBuf := make([]byte, 128)
