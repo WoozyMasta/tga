@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/draw"
 	"io"
 	"math"
 	"strings"
@@ -202,6 +201,48 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 
 		return writeTGA2TailIfNeeded(cw, meta)
 
+	case *image.RGBA:
+		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
+		if err != nil {
+			return err
+		}
+
+		if settings.RLE {
+			header[2] = typeRLETrueColor
+		} else {
+			header[2] = typeTrueColor
+		}
+		switch trueColorDepth {
+		case 16:
+			header[16] = 16
+		case 24:
+			header[16] = 24
+		default:
+			header[16] = 32
+		}
+
+		alphaBits, err := resolveDescriptorAlphaBits(trueColorDepth)
+		if err != nil {
+			return err
+		}
+		meta, err = prepareMetadataForEncoding(meta, alphaBits)
+		if err != nil {
+			return err
+		}
+		header[17] = buildImageDescriptor(settings.OriginBottom, alphaBits)
+
+		if _, err := out.Write(header[:]); err != nil {
+			return err
+		}
+		if err := writeImageID(out, settings.ImageID); err != nil {
+			return err
+		}
+		if err := encodeImageRows(out, src, b, trueColorDepth, settings.OriginBottom, settings.RLE); err != nil {
+			return err
+		}
+
+		return writeTGA2TailIfNeeded(cw, meta)
+
 	case *image.NRGBA:
 		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
 		if err != nil {
@@ -258,8 +299,6 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			return err
 		}
 
-		// Convert arbitrary image.Image once to a canonical straight-alpha
-		// representation before choosing the true-color packing path.
 		if settings.RLE {
 			header[2] = typeRLETrueColor
 		} else {
@@ -292,20 +331,66 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			return err
 		}
 
-		dst := image.NewNRGBA(b)
-		draw.Draw(dst, b, m, b.Min, draw.Src)
-
-		if settings.RLE {
-			if err := encodeNRGBARLE(out, dst, b, trueColorDepth, settings.OriginBottom); err != nil {
-				return err
-			}
-		} else {
-			if err := encodeNRGBA(out, dst, b, trueColorDepth, settings.OriginBottom); err != nil {
-				return err
-			}
+		if err := encodeImageRows(out, m, b, trueColorDepth, settings.OriginBottom, settings.RLE); err != nil {
+			return err
 		}
 
 		return writeTGA2TailIfNeeded(cw, meta)
+	}
+}
+
+// encodeImageRows converts generic image sources one row at a time before packing.
+func encodeImageRows(w io.Writer, src image.Image, b image.Rectangle, depth int, originBottom, rle bool) error {
+	width := b.Dx()
+	bytesPerPixel, err := trueColorBytesPerPixel(depth)
+	if err != nil {
+		return err
+	}
+	rowPixelsSize := width * 4
+	rowSize := width * bytesPerPixel
+	rowStorage := make([]byte, rowPixelsSize+rowSize+1+128*bytesPerPixel)
+	rowPixels := rowStorage[:rowPixelsSize]
+	rowPacked := rowStorage[rowPixelsSize : rowPixelsSize+rowSize]
+	packet := rowStorage[rowPixelsSize+rowSize:]
+
+	for rowIndex := 0; rowIndex < b.Dy(); rowIndex++ {
+		y := b.Min.Y + rowIndex
+		if originBottom {
+			y = b.Max.Y - 1 - rowIndex
+		}
+		fillNRGBARow(rowPixels, src, b.Min.X, y)
+		packNRGBARow(rowPacked, rowPixels, depth)
+
+		if rle {
+			if err := encodeRLEPackets(w, rowPacked, bytesPerPixel, packet); err != nil {
+				return err
+			}
+		} else if _, err := w.Write(rowPacked); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// fillNRGBARow converts source colors to straight-alpha bytes
+// without creating a temporary image or a color value for each pixel.
+func fillNRGBARow(dst []byte, src image.Image, x, y int) {
+	for i := 0; i < len(dst); i += 4 {
+		r, g, b, a := src.At(x+i/4, y).RGBA()
+		if a == 0 {
+			dst[i+0], dst[i+1], dst[i+2], dst[i+3] = 0, 0, 0, 0
+			continue
+		}
+
+		if a != 0xffff {
+			r = (r * 0xffff) / a
+			g = (g * 0xffff) / a
+			b = (b * 0xffff) / a
+		}
+
+		// #nosec G115 -- RGBA components are bounded to 16 bits before shifting.
+		dst[i+0], dst[i+1], dst[i+2], dst[i+3] = uint8(r>>8), uint8(g>>8), uint8(b>>8), uint8(a>>8)
 	}
 }
 

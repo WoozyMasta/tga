@@ -14,6 +14,10 @@ type writeCallCounter struct {
 	calls int
 }
 
+type genericTestImage struct {
+	image.Image
+}
+
 func (w *writeCallCounter) Write(p []byte) (int, error) {
 	w.calls++
 	return w.Buffer.Write(p)
@@ -101,7 +105,6 @@ func TestEncode_TooLarge(t *testing.T) {
 }
 
 func TestEncode_OtherImageType(t *testing.T) {
-	// *image.RGBA and other types go through default path (convert to NRGBA via draw.Draw)
 	rgba := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	rgba.Set(1, 1, color.RGBA{R: 255, G: 0, B: 0, A: 255})
 
@@ -118,6 +121,40 @@ func TestEncode_OtherImageType(t *testing.T) {
 	r1, g1, b1, a1 := dec.At(1, 1).RGBA()
 	if r0 != r1 || g0 != g1 || b0 != b1 || a0 != a1 {
 		t.Errorf("pixel (1,1): got %v, want %v", dec.At(1, 1), rgba.At(1, 1))
+	}
+}
+
+func TestEncode_GenericImageRows(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(5, 7, 9, 10))
+	for y := 7; y < 10; y++ {
+		for x := 5; x < 9; x++ {
+			src.SetNRGBA(x, y, color.NRGBA{
+				R: uint8(x * 11), G: uint8(y * 13), B: uint8(x + y), A: uint8(80 + x),
+			})
+		}
+	}
+
+	for _, originBottom := range []bool{false, true} {
+		var buf bytes.Buffer
+		opts := &EncodeOptions{OriginBottom: originBottom, PixelDepth: 32, RLE: true}
+		if err := EncodeWithOptions(&buf, genericTestImage{Image: src}, opts); err != nil {
+			t.Fatalf("Encode generic image, bottom=%t: %v", originBottom, err)
+		}
+		decoded, err := Decode(bytes.NewReader(buf.Bytes()))
+		if err != nil {
+			t.Fatalf("Decode generic image, bottom=%t: %v", originBottom, err)
+		}
+		for y := 0; y < src.Bounds().Dy(); y++ {
+			for x := 0; x < src.Bounds().Dx(); x++ {
+				want := src.At(x+src.Bounds().Min.X, y+src.Bounds().Min.Y)
+				got := decoded.At(x, y)
+				wr, wg, wb, wa := want.RGBA()
+				gr, gg, gb, ga := got.RGBA()
+				if wr != gr || wg != gg || wb != gb || wa != ga {
+					t.Fatalf("pixel (%d,%d), bottom=%t: got %v, want %v", x, y, originBottom, got, want)
+				}
+			}
+		}
 	}
 }
 

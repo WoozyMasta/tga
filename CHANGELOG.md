@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Generic `image.Image` encoding now converts one row at a time,
+  avoiding a full-image intermediate `NRGBA` allocation.
 * Encoder palette data and RLE packets now use bounded buffers
   to reduce the number of underlying `io.Writer.Write` calls.
 * RLE decoding now writes bottom-origin pixels directly to logical rows,

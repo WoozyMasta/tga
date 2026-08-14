@@ -2,6 +2,7 @@ package tga
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"io"
@@ -28,6 +29,14 @@ func buildNRGBA(w, h int) image.Image {
 		}
 	}
 	return img
+}
+
+type genericBenchImage struct {
+	image.Image
+}
+
+func buildGeneric(w, h int) image.Image {
+	return genericBenchImage{Image: buildNRGBA(w, h)}
 }
 
 func buildGray(w, h int) image.Image {
@@ -151,6 +160,25 @@ func BenchmarkEncode(b *testing.B) {
 					}
 				})
 			}
+		}
+	}
+}
+
+// BenchmarkEncodeGeneric measures row-wise conversion for image.Image values
+// that do not match one of the encoder's concrete fast-path types.
+func BenchmarkEncodeGeneric(b *testing.B) {
+	img := buildGeneric(1920, 1080)
+	for _, depth := range []int{24, 32} {
+		for _, rle := range []bool{false, true} {
+			b.Run(fmt.Sprintf("%dbit/%s", depth, rleLabel(rle)), func(b *testing.B) {
+				opts := &EncodeOptions{PixelDepth: depth, RLE: rle}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if err := EncodeWithOptions(io.Discard, img, opts); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
 		}
 	}
 }
