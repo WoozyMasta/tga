@@ -111,6 +111,7 @@ func TestEncode_TooLarge(t *testing.T) {
 func TestEncode_OtherImageType(t *testing.T) {
 	rgba := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	rgba.Set(1, 1, color.RGBA{R: 255, G: 0, B: 0, A: 255})
+	rgba.SetRGBA(2, 2, color.RGBA{R: 100, G: 50, B: 25, A: 128})
 
 	var buf bytes.Buffer
 	if err := Encode(&buf, rgba); err != nil {
@@ -120,11 +121,13 @@ func TestEncode_OtherImageType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	// Decoded as NRGBA; compare RGBA at (1,1)
-	r0, g0, b0, a0 := rgba.At(1, 1).RGBA()
-	r1, g1, b1, a1 := dec.At(1, 1).RGBA()
-	if r0 != r1 || g0 != g1 || b0 != b1 || a0 != a1 {
-		t.Errorf("pixel (1,1): got %v, want %v", dec.At(1, 1), rgba.At(1, 1))
+	// Decoded as NRGBA; compare straight-alpha values at opaque and alpha pixels.
+	for _, point := range []image.Point{{X: 1, Y: 1}, {X: 2, Y: 2}} {
+		want := color.NRGBAModel.Convert(rgba.At(point.X, point.Y)).(color.NRGBA)
+		got := dec.(*image.NRGBA).NRGBAAt(point.X, point.Y)
+		if got != want {
+			t.Errorf("pixel %v: got %v, want %v", point, got, want)
+		}
 	}
 }
 

@@ -363,7 +363,11 @@ func encodeImageRows(w io.Writer, src image.Image, b image.Rectangle, depth int,
 		if originBottom {
 			y = b.Max.Y - 1 - rowIndex
 		}
-		fillNRGBARow(rowPixels, src, b.Min.X, y)
+		if rgba, ok := src.(*image.RGBA); ok {
+			fillRGBARow(rowPixels, rgba, b.Min.X, y)
+		} else {
+			fillNRGBARow(rowPixels, src, b.Min.X, y)
+		}
 		packNRGBARow(rowPacked, rowPixels, depth)
 
 		if rle {
@@ -396,6 +400,31 @@ func fillNRGBARow(dst []byte, src image.Image, x, y int) {
 
 		// #nosec G115 -- RGBA components are bounded to 16 bits before shifting.
 		dst[i+0], dst[i+1], dst[i+2], dst[i+3] = uint8(r>>8), uint8(g>>8), uint8(b>>8), uint8(a>>8)
+	}
+}
+
+// fillRGBARow converts premultiplied RGBA storage to straight-alpha bytes
+// without routing every pixel through the image.Image interface.
+func fillRGBARow(dst []byte, src *image.RGBA, x, y int) {
+	offset := (y-src.Rect.Min.Y)*src.Stride + (x-src.Rect.Min.X)*4
+	row := src.Pix[offset : offset+len(dst)]
+	for i := 0; i < len(dst); i += 4 {
+		r, g, b, a := row[i+0], row[i+1], row[i+2], row[i+3]
+		if a == 0 {
+			dst[i+0], dst[i+1], dst[i+2], dst[i+3] = 0, 0, 0, 0
+			continue
+		}
+
+		if a != 0xff {
+			// #nosec G115 -- the division result is shifted into the byte range.
+			r = uint8((uint32(r) * 0xffff / uint32(a)) >> 8)
+			// #nosec G115 -- the division result is shifted into the byte range.
+			g = uint8((uint32(g) * 0xffff / uint32(a)) >> 8)
+			// #nosec G115 -- the division result is shifted into the byte range.
+			b = uint8((uint32(b) * 0xffff / uint32(a)) >> 8)
+		}
+
+		dst[i+0], dst[i+1], dst[i+2], dst[i+3] = r, g, b, a
 	}
 }
 
