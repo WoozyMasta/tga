@@ -87,19 +87,14 @@ func Decode(r io.Reader) (image.Image, error) {
 			return nil, err
 		}
 
-		palSize := header.colorMapStart + header.colorMapLen
-		palette = make(color.Palette, palSize)
-		for i := range header.colorMapStart {
-			palette[i] = color.NRGBA{}
-		}
+		palette = make(color.Palette, header.colorMapLen)
 
 		// Create the color palette
 		for i := range header.colorMapLen {
 			offset := i * entryBytes
-			idx := header.colorMapStart + i
 			switch header.colorMapDepth {
 			case 24:
-				palette[idx] = color.NRGBA{
+				palette[i] = color.NRGBA{
 					R: rawPalette[offset+2],
 					G: rawPalette[offset+1],
 					B: rawPalette[offset+0],
@@ -107,7 +102,7 @@ func Decode(r io.Reader) (image.Image, error) {
 				}
 
 			case 32:
-				palette[idx] = color.NRGBA{
+				palette[i] = color.NRGBA{
 					R: rawPalette[offset+2],
 					G: rawPalette[offset+1],
 					B: rawPalette[offset+0],
@@ -116,24 +111,9 @@ func Decode(r io.Reader) (image.Image, error) {
 
 			case 15, 16:
 				v := uint16(rawPalette[offset]) | uint16(rawPalette[offset+1])<<8
-				palette[idx] = decodeRGB555(v)
-
-			default:
-				palette[idx] = color.Gray{Y: rawPalette[offset]}
+				palette[i] = decodeRGB555(v)
 			}
 		}
-	}
-
-	// 8-bit paletted images index the palette with a full byte (0..255).
-	// Pad the palette to 256 entries so out-of-range indices in (possibly malformed)
-	// pixel data resolve to a valid color instead of panicking on access.
-	if (header.imageType == typePaletted || header.imageType == typeRLEPaletted) && len(palette) < 256 {
-		full := make(color.Palette, 256)
-		n := copy(full, palette)
-		for i := n; i < 256; i++ {
-			full[i] = color.NRGBA{}
-		}
-		palette = full
 	}
 
 	// Go uses a top-left origin.
@@ -172,6 +152,8 @@ func Decode(r io.Reader) (image.Image, error) {
 			flipX,
 			flipY,
 			palette,
+			header.colorMapStart,
+			header.colorMapLen,
 		)
 
 	case typeRLEPaletted:
@@ -183,6 +165,8 @@ func Decode(r io.Reader) (image.Image, error) {
 			flipX,
 			flipY,
 			palette,
+			header.colorMapStart,
+			header.colorMapLen,
 		)
 
 	default:
@@ -246,7 +230,7 @@ func parseHeader(raw [headerSize]byte) (parsedHeader, error) {
 	if err := validateImageSpec(header.imageType, header.pixelDepth, header.hasColorMap, header.colorMapLen); err != nil {
 		return parsedHeader{}, err
 	}
-	if header.hasColorMap && header.colorMapDepth == 0 {
+	if header.hasColorMap && !isColorMapDepth(header.colorMapDepth) {
 		return parsedHeader{}, ErrUnsupported
 	}
 	if header.descriptor&maskInterleave != 0 {
@@ -255,6 +239,16 @@ func parseHeader(raw [headerSize]byte) (parsedHeader, error) {
 
 	header.hasAlpha = header.pixelDepth == 16 && header.descriptor&0x0f == 1
 	return header, nil
+}
+
+// isColorMapDepth reports whether depth is supported for color-map entries.
+func isColorMapDepth(depth uint8) bool {
+	switch depth {
+	case 15, 16, 24, 32:
+		return true
+	default:
+		return false
+	}
 }
 
 // validateImageSpec checks that image type and bit depth combination is supported.
@@ -357,7 +351,7 @@ func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipX, flipY boo
 }
 
 // decodeUncompressedPaletted reads uncompressed color-mapped image data.
-func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool, pal color.Palette) (image.Image, error) {
+func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool, pal color.Palette, colorMapStart, colorMapLen int) (image.Image, error) {
 	if depth != 8 {
 		return nil, ErrUnsupported
 	}
@@ -376,7 +370,14 @@ func decodeUncompressedPaletted(r io.Reader, w, h, depth int, flipX, flipY bool,
 		if _, err := io.ReadFull(r, rowBuf); err != nil {
 			return nil, err
 		}
-		copy(img.Pix[destOffset:], rowBuf)
+		if err := normalizePaletteIndices(
+			img.Pix[destOffset:destOffset+w],
+			rowBuf,
+			colorMapStart,
+			colorMapLen,
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	if flipX {
@@ -494,7 +495,13 @@ func decodeRLE(r *bufio.Reader, w, h, depth int, hasAlpha, flipX, flipY bool) (i
 }
 
 // decodeRLEPaletted decodes RLE-compressed color-mapped image data.
-func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipX, flipY bool, pal color.Palette) (image.Image, error) {
+func decodeRLEPaletted(
+	r *bufio.Reader,
+	w, h, depth int,
+	flipX, flipY bool,
+	pal color.Palette,
+	colorMapStart, colorMapLen int,
+) (image.Image, error) {
 	if depth != 8 {
 		return nil, ErrUnsupported
 	}
@@ -504,6 +511,7 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipX, flipY bool, pal 
 	totalPixels := w * h
 	pixelsRead := 0
 	outIdx := 0
+	rawBuf := make([]byte, 128)
 
 	// Decode RLE packets
 	for pixelsRead < totalPixels {
@@ -525,14 +533,30 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipX, flipY bool, pal 
 			if err != nil {
 				return nil, err
 			}
+			val, err = normalizePaletteIndex(val, colorMapStart, colorMapLen)
+			if err != nil {
+				return nil, err
+			}
+
 			dst := outPix[outIdx : outIdx+count]
 			dst[0] = val
 			replicatePattern(dst, 1)
 			outIdx += count
 		} else {
-			if _, err := io.ReadFull(r, outPix[outIdx:outIdx+count]); err != nil {
+			buf := rawBuf[:count]
+			if _, err := io.ReadFull(r, buf); err != nil {
 				return nil, err
 			}
+
+			if err := normalizePaletteIndices(
+				outPix[outIdx:outIdx+count],
+				buf,
+				colorMapStart,
+				colorMapLen,
+			); err != nil {
+				return nil, err
+			}
+
 			outIdx += count
 		}
 		pixelsRead += count
@@ -546,6 +570,34 @@ func decodeRLEPaletted(r *bufio.Reader, w, h, depth int, flipX, flipY bool, pal 
 	}
 
 	return img, nil
+}
+
+// normalizePaletteIndices validates TGA color-map indices and converts them to local palette indices.
+func normalizePaletteIndices(dst, src []byte, colorMapStart, colorMapLen int) error {
+	for i, index := range src {
+		normalized, err := normalizePaletteIndex(index, colorMapStart, colorMapLen)
+		if err != nil {
+			return err
+		}
+		dst[i] = normalized
+	}
+
+	return nil
+}
+
+// normalizePaletteIndex validates one TGA color-map index and converts it to a local palette index.
+func normalizePaletteIndex(index byte, colorMapStart, colorMapLen int) (byte, error) {
+	if colorMapStart < 0 || colorMapStart > 0xff || colorMapLen <= 0 {
+		return 0, ErrPaletteIndex
+	}
+
+	value := int(index)
+	if value < colorMapStart || value >= colorMapStart+colorMapLen {
+		return 0, ErrPaletteIndex
+	}
+
+	normalized := value - colorMapStart
+	return byte(normalized), nil // #nosec G115 -- normalized is within [0, 255].
 }
 
 // convertRowToNRGBA converts one row of TGA BGR/BGRA bytes to NRGBA (RGBA).

@@ -17,4 +17,6 @@ var (
 	ErrRLEOverrun = errors.New("tga: rle data overrun")
 	// ErrHeaderTooShort is returned when the TGA header is too short.
 	ErrHeaderTooShort = errors.New("tga: header too short")
+	// ErrPaletteIndex is returned when an indexed pixel is outside the declared color map.
+	ErrPaletteIndex = errors.New("tga: palette index out of range")
 )

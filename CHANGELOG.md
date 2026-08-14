@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning][].
   including consistent errors for truncated and malformed headers.
 * Decoder now handles all four TGA image origins
   and rejects unsupported interleaved image data.
+* Indexed TGA decoding now rejects out-of-range palette indices
+  and unsupported color-map entry depths.
 
 ## [1.2.0][] - 2026-06-17
 

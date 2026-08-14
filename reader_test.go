@@ -431,6 +431,91 @@ func TestDecode_RLEPaletted8(t *testing.T) {
 	}
 }
 
+func TestDecode_PaletteIndices(t *testing.T) {
+	palette := []byte{
+		0, 0, 255,
+		0, 255, 0,
+	}
+
+	for _, tt := range []struct {
+		name    string
+		data    []byte
+		wantErr error
+	}{
+		{name: "non_zero_first_raw", data: makePalettedTGA(2, 2, 24, palette, []byte{2, 3}, false)},
+		{name: "non_zero_first_rle", data: makePalettedTGA(2, 2, 24, palette, []byte{2, 3}, true)},
+		{name: "below_first_raw", data: makePalettedTGA(2, 1, 24, palette[:3], []byte{1}, false), wantErr: ErrPaletteIndex},
+		{name: "below_first_rle", data: makePalettedTGA(2, 1, 24, palette[:3], []byte{1}, true), wantErr: ErrPaletteIndex},
+		{name: "at_or_above_end_raw", data: makePalettedTGA(2, 1, 24, palette[:3], []byte{3}, false), wantErr: ErrPaletteIndex},
+		{name: "at_or_above_end_rle", data: makePalettedTGA(2, 1, 24, palette[:3], []byte{3}, true), wantErr: ErrPaletteIndex},
+		{name: "unsupported_entry_depth", data: makePalettedTGA(0, 1, 8, []byte{0}, []byte{0}, false), wantErr: ErrUnsupported},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			decoded, err := Decode(bytes.NewReader(tt.data))
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("Decode error = %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+
+			paletted, ok := decoded.(*image.Paletted)
+			if !ok {
+				t.Fatalf("decoded image = %T, want *image.Paletted", decoded)
+			}
+			if len(paletted.Palette) != 2 {
+				t.Fatalf("palette length = %d, want 2", len(paletted.Palette))
+			}
+			if got := paletted.Pix; !bytes.Equal(got, []byte{0, 1}) {
+				t.Fatalf("normalized palette indices = %v, want [0 1]", got)
+			}
+			if got := color.NRGBAModel.Convert(paletted.At(0, 0)); got != (color.NRGBA{R: 255, A: 255}) {
+				t.Fatalf("palette color 0 = %+v, want red", got)
+			}
+			if got := color.NRGBAModel.Convert(paletted.At(1, 0)); got != (color.NRGBA{G: 255, A: 255}) {
+				t.Fatalf("palette color 1 = %+v, want green", got)
+			}
+		})
+	}
+}
+
+func TestDecodeConfig_UnsupportedPaletteDepth(t *testing.T) {
+	data := makePalettedTGA(0, 1, 8, []byte{0}, []byte{0}, false)
+
+	_, err := DecodeConfig(bytes.NewReader(data))
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("DecodeConfig error = %v, want ErrUnsupported", err)
+	}
+}
+
+func makePalettedTGA(first, length int, depth byte, palette, indices []byte, rle bool) []byte {
+	imageType := byte(typePaletted)
+	if rle {
+		imageType = typeRLEPaletted
+	}
+	header := []byte{
+		0, 1, imageType,
+		byte(first), byte(first >> 8),
+		byte(length), byte(length >> 8),
+		depth,
+		0, 0, 0, 0,
+		byte(len(indices)), byte(len(indices) >> 8),
+		1, 0,
+		8, maskOriginTop,
+	}
+
+	payload := append([]byte(nil), indices...)
+	if rle {
+		payload = append([]byte{byte(len(indices) - 1)}, payload...)
+	}
+
+	data := append(header, palette...)
+	return append(data, payload...)
+}
+
 func TestDecode_UnsupportedDepthForRLEType(t *testing.T) {
 	header := [18]byte{
 		0, 0, 10,
