@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning][].
   extension metadata, thumbnails, and developer areas.
 * `DecodeWithOptions` for opt-in pixel and decoded-memory limits.
 * 16-bit grayscale+alpha decoding for raw and RLE TGA images.
+* ImageMagick-generated 24-bit and 32-bit true-color parity fixtures
+  now verify TGA decoding against PNG pixel oracles.
 
 ### Changed
 
