@@ -422,9 +422,19 @@ func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata) error {
 		return err
 	}
 
+	extEnd, err := uint32FromInt64(int64(extOffset) + int64(tga2ExtensionSize))
+	if err != nil {
+		return err
+	}
+	postageEnd := int64(extEnd)
 	postageOffset := uint32(0)
 	if len(postageStamp) > 0 {
-		postageOffset = extOffset + tga2ExtensionSize
+		postageOffset = extEnd
+		postageEndOffset, err := uint32FromInt64(postageEnd + int64(len(postageStamp)))
+		if err != nil {
+			return err
+		}
+		postageEnd = int64(postageEndOffset)
 	}
 
 	ext := buildExtensionArea(meta, postageOffset)
@@ -440,7 +450,7 @@ func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata) error {
 
 	devOffset := uint32(0)
 	if len(meta.DeveloperArea) > 0 {
-		devOffset, err = uint32FromInt64(w.n)
+		devOffset, err = uint32FromInt64(postageEnd)
 		if err != nil {
 			return err
 		}

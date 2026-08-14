@@ -3,8 +3,10 @@ package tga
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"image"
 	"image/color"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -232,6 +234,66 @@ func TestDecodeWithMetadata_AlphaAttributes(t *testing.T) {
 	}
 	if _, _, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes())); err != ErrFormat {
 		t.Fatalf("missing descriptor alpha error=%v, want=%v", err, ErrFormat)
+	}
+}
+
+func TestEncodeWithOptions_RejectsInvalidMetadataBeforeWriting(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	tooLargeThumbnail := image.NewNRGBA(image.Rect(0, 0, 256, 1))
+	tests := []struct {
+		name string
+		meta TGA2Metadata
+	}{
+		{name: "author too long", meta: TGA2Metadata{Author: strings.Repeat("a", 41)}},
+		{name: "author contains NUL", meta: TGA2Metadata{Author: "a\x00b"}},
+		{name: "too many comments", meta: TGA2Metadata{Comments: []string{"1", "2", "3", "4", "5"}}},
+		{name: "comment too long", meta: TGA2Metadata{Comments: []string{strings.Repeat("a", 81)}}},
+		{name: "job name too long", meta: TGA2Metadata{JobName: strings.Repeat("a", 41)}},
+		{name: "software ID too long", meta: TGA2Metadata{SoftwareID: strings.Repeat("a", 41)}},
+		{name: "negative gamma", meta: TGA2Metadata{Gamma: -1}},
+		{name: "non-finite gamma", meta: TGA2Metadata{Gamma: math.Inf(1)}},
+		{name: "NaN gamma", meta: TGA2Metadata{Gamma: math.NaN()}},
+		{name: "partial gamma ratio", meta: TGA2Metadata{GammaNumerator: 1}},
+		{name: "conflicting gamma values", meta: TGA2Metadata{Gamma: 2.2, GammaNumerator: 2, GammaDenominator: 1}},
+		{name: "gamma out of range", meta: TGA2Metadata{Gamma: 65.536}},
+		{name: "timestamp precision", meta: TGA2Metadata{Timestamp: time.Date(2026, 1, 1, 0, 0, 0, 1, time.UTC)}},
+		{name: "timestamp year", meta: TGA2Metadata{Timestamp: time.Date(65536, 1, 1, 0, 0, 0, 0, time.UTC)}},
+		{name: "negative duration", meta: TGA2Metadata{JobDuration: -time.Second}},
+		{name: "duration precision", meta: TGA2Metadata{JobDuration: 500 * time.Millisecond}},
+		{name: "duration hours", meta: TGA2Metadata{JobDuration: 65536 * time.Hour}},
+		{name: "attribute type", meta: TGA2Metadata{AttributesType: 5}},
+		{name: "thumbnail dimensions", meta: TGA2Metadata{Thumbnail: tooLargeThumbnail}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := EncodeWithOptions(&buf, img, &EncodeOptions{Metadata: &test.meta})
+			if err == nil {
+				t.Fatal("expected metadata validation error")
+			}
+			if !errors.Is(err, ErrMetadata) || !errors.Is(err, ErrFormat) {
+				t.Fatalf("error=%v, want ErrMetadata and ErrFormat", err)
+			}
+			if buf.Len() != 0 {
+				t.Fatalf("validation wrote %d bytes", buf.Len())
+			}
+		})
+	}
+}
+
+func TestWriteTGA2Tail_RejectsOffsetOverflowBeforeWriting(t *testing.T) {
+	var buf bytes.Buffer
+	cw := &countingWriter{
+		w: &buf,
+		n: int64(math.MaxUint32) - int64(tga2ExtensionSize) + 1,
+	}
+	err := writeTGA2Tail(cw, &TGA2Metadata{})
+	if !errors.Is(err, ErrFormat) {
+		t.Fatalf("error=%v, want ErrFormat", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("offset validation wrote %d bytes", buf.Len())
 	}
 }
 

@@ -26,4 +26,7 @@ var (
 
 	// ErrResourceLimit is returned when DecodeWithOptions would exceed a configured limit.
 	ErrResourceLimit = errors.New("tga: decode resource limit exceeded")
+
+	// ErrMetadata is returned when TGA 2.0 metadata is invalid.
+	ErrMetadata = errors.New("tga: invalid metadata")
 )

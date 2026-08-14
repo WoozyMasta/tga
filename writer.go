@@ -6,10 +6,14 @@ package tga
 
 import (
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"io"
+	"math"
+	"strings"
+	"time"
 
 	"github.com/woozymasta/tga/internal/simd"
 )
@@ -304,8 +308,115 @@ func validateMetadata(meta *TGA2Metadata) error {
 	if meta == nil {
 		return nil
 	}
+
+	if err := validateMetadataText("author", meta.Author, 40); err != nil {
+		return err
+	}
+	if len(meta.Comments) > 4 {
+		return metadataError("comments", "more than four lines")
+	}
+	for i, comment := range meta.Comments {
+		if err := validateMetadataText(fmt.Sprintf("comments[%d]", i), comment, 80); err != nil {
+			return err
+		}
+	}
+	if err := validateMetadataText("job_name", meta.JobName, 40); err != nil {
+		return err
+	}
+	if err := validateMetadataText("software_id", meta.SoftwareID, 40); err != nil {
+		return err
+	}
 	if meta.AttributesType > 4 {
-		return ErrFormat
+		return metadataError("attributes_type", "must be between 0 and 4")
+	}
+	if err := validateMetadataTimestamp(meta.Timestamp); err != nil {
+		return err
+	}
+	if err := validateMetadataDuration(meta.JobDuration); err != nil {
+		return err
+	}
+	if err := validateMetadataGamma(meta); err != nil {
+		return err
+	}
+	if uint64(len(meta.DeveloperArea)) > math.MaxUint32 {
+		return metadataError("developer_area", "is too large")
+	}
+	if thumbnail := meta.Thumbnail; thumbnail != nil {
+		bounds := thumbnail.Bounds()
+		if bounds.Dx() <= 0 || bounds.Dy() <= 0 || bounds.Dx() > math.MaxUint8 || bounds.Dy() > math.MaxUint8 {
+			return metadataError("thumbnail", "dimensions must be between 1 and 255 pixels")
+		}
+	}
+
+	return nil
+}
+
+// metadataError wraps field-specific diagnostics in the format sentinel.
+func metadataError(field, reason string) error {
+	return fmt.Errorf("%w: %w: %s: %s", ErrFormat, ErrMetadata, field, reason)
+}
+
+// validateMetadataText rejects values that cannot fit in a TGA zero-terminated field.
+func validateMetadataText(field, value string, maxBytes int) error {
+	if strings.IndexByte(value, 0) >= 0 {
+		return metadataError(field, "contains NUL")
+	}
+	if len(value) > maxBytes {
+		return metadataError(field, "is too long")
+	}
+
+	return nil
+}
+
+// validateMetadataTimestamp rejects precision and year values that writeTimestamp would lose.
+func validateMetadataTimestamp(ts time.Time) error {
+	if ts.IsZero() {
+		return nil
+	}
+
+	if ts.Nanosecond() != 0 || ts.Year() < 0 || ts.Year() > math.MaxUint16 {
+		return metadataError("timestamp", "has unsupported precision or year")
+	}
+
+	return nil
+}
+
+// validateMetadataDuration rejects values that cannot be represented by three TGA fields.
+func validateMetadataDuration(duration time.Duration) error {
+	if duration < 0 || duration%time.Second != 0 {
+		return metadataError("job_duration", "must be a non-negative whole second")
+	}
+	hours := duration / time.Hour
+	if hours > math.MaxUint16 {
+		return metadataError("job_duration", "hours exceed the TGA field range")
+	}
+
+	return nil
+}
+
+// validateMetadataGamma rejects ambiguous or non-representable gamma values.
+func validateMetadataGamma(meta *TGA2Metadata) error {
+	hasRatio := meta.GammaNumerator != 0 || meta.GammaDenominator != 0
+	if hasRatio {
+		if meta.GammaNumerator == 0 || meta.GammaDenominator == 0 {
+			return metadataError("gamma_ratio", "numerator and denominator must both be set")
+		}
+		if meta.Gamma != 0 {
+			return metadataError("gamma", "cannot be combined with an explicit ratio")
+		}
+
+		return nil
+	}
+
+	if meta.Gamma == 0 {
+		return nil
+	}
+
+	if meta.Gamma < 0 || math.IsNaN(meta.Gamma) || math.IsInf(meta.Gamma, 0) {
+		return metadataError("gamma", "must be finite and positive")
+	}
+	if rounded := math.Round(meta.Gamma * 1000); rounded <= 0 || rounded > math.MaxUint16 {
+		return metadataError("gamma", "cannot be represented as a uint16 ratio")
 	}
 
 	return nil
