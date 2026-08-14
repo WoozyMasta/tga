@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning][].
 * 16-bit true-color decoding now preserves the A1R5G5B5 alpha bit
   when the image descriptor declares one attribute bit;
   15-bit RGB555 remains opaque.
+* `Decode` and `DecodeConfig` now share header parsing and validation,
+  including consistent errors for truncated and malformed headers.
 
 ## [1.2.0][] - 2026-06-17
 

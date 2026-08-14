@@ -46,6 +46,74 @@ func TestDecodeConfig(t *testing.T) {
 	}
 }
 
+func TestDecodeAndConfig_HeaderValidation(t *testing.T) {
+	validTrueColor := makeRawTGA24(1, 1, true)
+	validRLETrueColor := append([]byte{
+		0, 0, typeRLETrueColor,
+		0, 0, 0, 0, 0,
+		0, 0, 0, 0,
+		1, 0, 1, 0,
+		24, maskOriginTop,
+	}, 0x00, 0, 0, 0)
+	validPaletted := append([]byte{
+		0, 1, typePaletted,
+		0, 0,
+		1, 0,
+		24,
+		0, 0, 0, 0,
+		1, 0, 1, 0,
+		8, maskOriginTop,
+	}, 0, 0, 0, 0)
+
+	invalidColorMapType := append([]byte(nil), validTrueColor...)
+	invalidColorMapType[1] = 2
+	trueColorWithColorMap := append([]byte(nil), validTrueColor...)
+	trueColorWithColorMap[1] = 1
+	unsupportedDepth := append([]byte(nil), validTrueColor...)
+	unsupportedDepth[16] = 12
+	zeroColorMapDepth := append([]byte(nil), validPaletted...)
+	zeroColorMapDepth[7] = 0
+	zeroWidth := append([]byte(nil), validTrueColor...)
+	zeroWidth[12], zeroWidth[13] = 0, 0
+	palettedWithoutColorMap := append([]byte(nil), validTrueColor...)
+	palettedWithoutColorMap[2], palettedWithoutColorMap[16] = typePaletted, 8
+
+	for _, tt := range []struct {
+		name    string
+		data    []byte
+		wantErr error
+	}{
+		{name: "true_color", data: validTrueColor},
+		{name: "rle_true_color", data: validRLETrueColor},
+		{name: "paletted", data: validPaletted},
+		{name: "short", data: validTrueColor[:headerSize-1], wantErr: ErrHeaderTooShort},
+		{name: "invalid_color_map_type", data: invalidColorMapType, wantErr: ErrFormat},
+		{name: "true_color_with_color_map", data: trueColorWithColorMap, wantErr: ErrFormat},
+		{name: "unsupported_depth", data: unsupportedDepth, wantErr: ErrUnsupported},
+		{name: "zero_color_map_depth", data: zeroColorMapDepth, wantErr: ErrUnsupported},
+		{name: "zero_width", data: zeroWidth, wantErr: ErrFormat},
+		{name: "paletted_without_color_map", data: palettedWithoutColorMap, wantErr: ErrFormat},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, configErr := DecodeConfig(bytes.NewReader(tt.data))
+			_, decodeErr := Decode(bytes.NewReader(tt.data))
+
+			if (configErr == nil) != (decodeErr == nil) {
+				t.Fatalf("DecodeConfig error = %v, Decode error = %v", configErr, decodeErr)
+			}
+			if tt.wantErr == nil {
+				return
+			}
+			if !errors.Is(configErr, tt.wantErr) {
+				t.Fatalf("DecodeConfig error = %v, want %v", configErr, tt.wantErr)
+			}
+			if !errors.Is(decodeErr, tt.wantErr) {
+				t.Fatalf("Decode error = %v, want %v", decodeErr, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestDecode_Synthetic24Bit(t *testing.T) {
 	// 2x2 image, top-left origin, one red pixel (0,0), rest black
 	header := [18]byte{

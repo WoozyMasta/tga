@@ -27,47 +27,35 @@ const (
 )
 
 // RegisterFormat registers the TGA format with image.Decode and image.DecodeConfig.
-// Because TGA has no magic bytes, it does not play nicely with other formats when
-// image.Decode tries them in order; registration is disabled by default. Call this
-// explicitly if you need image.Decode to recognize TGA (e.g. in a TGA-only context
-// or after other formats).
+// Because TGA has no magic bytes, it does not play nicely with other formats
+// when image.Decode tries them in order; registration is disabled by default.
+// Call this explicitly if you need image.Decode to recognize TGA
+// (e.g. in a TGA-only context or after other formats).
 func RegisterFormat() {
 	image.RegisterFormat("tga", "", Decode, DecodeConfig)
 }
 
 // DecodeConfig returns the image configuration without decoding pixel data.
 func DecodeConfig(r io.Reader) (image.Config, error) {
-	var header [headerSize]byte
-	if _, err := io.ReadFull(r, header[:]); err != nil {
+	header, err := readHeader(r)
+	if err != nil {
 		return image.Config{}, err
 	}
 
-	width := int(header[12]) | int(header[13])<<8
-	height := int(header[14]) | int(header[15])<<8
-	bpp := header[16]
-
-	// Determine the color model based on the bits per pixel
 	var cm color.Model
-	switch bpp {
-	case 8:
-		imageType := header[2]
-		if imageType == typePaletted || imageType == typeRLEPaletted {
-			cm = color.Palette{}
-		} else {
-			cm = color.GrayModel
-		}
-
-	case 15, 16, 24, 32:
+	switch header.imageType {
+	case typeTrueColor, typeRLETrueColor:
 		cm = color.NRGBAModel
-
-	default:
-		return image.Config{}, ErrUnsupported
+	case typeGrayscale, typeRLEGrayscale:
+		cm = color.GrayModel
+	case typePaletted, typeRLEPaletted:
+		cm = color.Palette{}
 	}
 
 	return image.Config{
 		ColorModel: cm,
-		Width:      width,
-		Height:     height,
+		Width:      header.width,
+		Height:     header.height,
 	}, nil
 }
 
@@ -78,64 +66,36 @@ func Decode(r io.Reader) (image.Image, error) {
 		br = bufio.NewReader(r)
 	}
 
-	var header [headerSize]byte
-	if _, err := io.ReadFull(br, header[:]); err != nil {
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return nil, ErrHeaderTooShort
-		}
+	header, err := readHeader(br)
+	if err != nil {
 		return nil, err
 	}
 
-	idLen := int(header[0])
-	hasCMap := header[1] == 1
-	imgType := header[2]
-	cMapStart := int(header[3]) | int(header[4])<<8
-	cMapLen := int(header[5]) | int(header[6])<<8
-	cMapDepth := header[7]
-
-	width := int(header[12]) | int(header[13])<<8
-	height := int(header[14]) | int(header[15])<<8
-	pixelDepth := int(header[16])
-	desc := header[17]
-	hasAlpha := pixelDepth == 16 && desc&0x0f == 1
-
-	if width == 0 || height == 0 {
-		return nil, ErrFormat
-	}
-
-	if err := validateImageSpec(imgType, pixelDepth, hasCMap, cMapLen); err != nil {
-		return nil, err
-	}
-
-	if idLen > 0 {
-		if _, err := br.Discard(idLen); err != nil {
+	if header.idLen > 0 {
+		if _, err := br.Discard(header.idLen); err != nil {
 			return nil, err
 		}
 	}
 
 	var palette color.Palette
-	if hasCMap && cMapLen > 0 {
-		entryBytes := (int(cMapDepth) + 7) / 8
-		if entryBytes == 0 {
-			return nil, ErrUnsupported // a color-map entry size of 0 bits is invalid
-		}
-
-		rawPalette := make([]byte, cMapLen*entryBytes)
+	if header.hasColorMap {
+		entryBytes := (int(header.colorMapDepth) + 7) / 8
+		rawPalette := make([]byte, header.colorMapLen*entryBytes)
 		if _, err := io.ReadFull(br, rawPalette); err != nil {
 			return nil, err
 		}
 
-		palSize := cMapStart + cMapLen
+		palSize := header.colorMapStart + header.colorMapLen
 		palette = make(color.Palette, palSize)
-		for i := range cMapStart {
+		for i := range header.colorMapStart {
 			palette[i] = color.NRGBA{}
 		}
 
 		// Create the color palette
-		for i := range cMapLen {
+		for i := range header.colorMapLen {
 			offset := i * entryBytes
-			idx := cMapStart + i
-			switch cMapDepth {
+			idx := header.colorMapStart + i
+			switch header.colorMapDepth {
 			case 24:
 				palette[idx] = color.NRGBA{
 					R: rawPalette[offset+2],
@@ -165,7 +125,7 @@ func Decode(r io.Reader) (image.Image, error) {
 	// 8-bit paletted images index the palette with a full byte (0..255).
 	// Pad the palette to 256 entries so out-of-range indices in (possibly malformed)
 	// pixel data resolve to a valid color instead of panicking on access.
-	if (imgType == typePaletted || imgType == typeRLEPaletted) && len(palette) < 256 {
+	if (header.imageType == typePaletted || header.imageType == typeRLEPaletted) && len(palette) < 256 {
 		full := make(color.Palette, 256)
 		n := copy(full, palette)
 		for i := n; i < 256; i++ {
@@ -175,24 +135,116 @@ func Decode(r io.Reader) (image.Image, error) {
 	}
 
 	// Bit 5 of descriptor: 0 = lower-left origin, 1 = upper-left. Go uses top-left.
-	flipY := (desc & maskOriginTop) == 0
+	flipY := (header.descriptor & maskOriginTop) == 0
 
-	switch imgType {
+	switch header.imageType {
 	case typeTrueColor, typeGrayscale:
-		return decodeUncompressed(br, width, height, pixelDepth, hasAlpha, flipY)
+		return decodeUncompressed(
+			br,
+			header.width,
+			header.height,
+			header.pixelDepth,
+			header.hasAlpha,
+			flipY,
+		)
 
 	case typeRLETrueColor, typeRLEGrayscale:
-		return decodeRLE(br, width, height, pixelDepth, hasAlpha, flipY)
+		return decodeRLE(
+			br,
+			header.width,
+			header.height,
+			header.pixelDepth,
+			header.hasAlpha,
+			flipY,
+		)
 
 	case typePaletted:
-		return decodeUncompressedPaletted(br, width, height, pixelDepth, flipY, palette)
+		return decodeUncompressedPaletted(
+			br,
+			header.width,
+			header.height,
+			header.pixelDepth,
+			flipY,
+			palette,
+		)
 
 	case typeRLEPaletted:
-		return decodeRLEPaletted(br, width, height, pixelDepth, flipY, palette)
+		return decodeRLEPaletted(
+			br,
+			header.width,
+			header.height,
+			header.pixelDepth,
+			flipY,
+			palette,
+		)
 
 	default:
 		return nil, ErrUnsupported
 	}
+}
+
+// parsedHeader is the validated fixed-size TGA image specification.
+type parsedHeader struct {
+	idLen         int   // idLen is the byte length of the image ID field following the header.
+	colorMapStart int   // colorMapStart is the first palette index declared by the color map.
+	colorMapLen   int   // colorMapLen is the number of entries declared by the color map.
+	width         int   // width is the image width in pixels.
+	height        int   // height is the image height in pixels.
+	pixelDepth    int   // pixelDepth is the bit depth of each encoded image pixel.
+	imageType     uint8 // imageType identifies the pixel encoding and compression mode.
+	colorMapDepth uint8 // colorMapDepth is the bit depth of each color-map entry.
+	descriptor    uint8 // descriptor contains alpha attributes and image origin bits.
+	hasColorMap   bool  // hasColorMap reports whether the header declares a color map.
+	hasAlpha      bool  // hasAlpha reports whether 16-bit pixels use an A1 alpha bit.
+}
+
+// readHeader reads, parses, and validates the fixed-size TGA header.
+func readHeader(r io.Reader) (parsedHeader, error) {
+	var raw [headerSize]byte
+	if _, err := io.ReadFull(r, raw[:]); err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return parsedHeader{}, ErrHeaderTooShort
+		}
+		return parsedHeader{}, err
+	}
+
+	return parseHeader(raw)
+}
+
+// parseHeader converts a raw TGA header into a validated image specification.
+func parseHeader(raw [headerSize]byte) (parsedHeader, error) {
+	header := parsedHeader{
+		idLen:         int(raw[0]),
+		imageType:     raw[2],
+		colorMapStart: int(raw[3]) | int(raw[4])<<8,
+		colorMapLen:   int(raw[5]) | int(raw[6])<<8,
+		colorMapDepth: raw[7],
+		width:         int(raw[12]) | int(raw[13])<<8,
+		height:        int(raw[14]) | int(raw[15])<<8,
+		pixelDepth:    int(raw[16]),
+		descriptor:    raw[17],
+	}
+
+	switch raw[1] {
+	case 0:
+	case 1:
+		header.hasColorMap = true
+	default:
+		return parsedHeader{}, ErrFormat
+	}
+
+	if header.width == 0 || header.height == 0 {
+		return parsedHeader{}, ErrFormat
+	}
+	if err := validateImageSpec(header.imageType, header.pixelDepth, header.hasColorMap, header.colorMapLen); err != nil {
+		return parsedHeader{}, err
+	}
+	if header.hasColorMap && header.colorMapDepth == 0 {
+		return parsedHeader{}, ErrUnsupported
+	}
+
+	header.hasAlpha = header.pixelDepth == 16 && header.descriptor&0x0f == 1
+	return header, nil
 }
 
 // validateImageSpec checks that image type and bit depth combination is supported.
@@ -202,17 +254,22 @@ func validateImageSpec(imgType uint8, pixelDepth int, hasCMap bool, cMapLen int)
 		if !isTrueColorDepth(pixelDepth) {
 			return ErrUnsupported
 		}
+		if hasCMap {
+			return ErrFormat
+		}
 
 	case typeGrayscale, typeRLEGrayscale:
 		if pixelDepth != 8 {
 			return ErrUnsupported
+		}
+		if hasCMap {
+			return ErrFormat
 		}
 
 	case typePaletted, typeRLEPaletted:
 		if pixelDepth != 8 {
 			return ErrUnsupported
 		}
-
 		if !hasCMap || cMapLen == 0 {
 			return ErrFormat
 		}
