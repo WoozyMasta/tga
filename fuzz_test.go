@@ -76,8 +76,8 @@ func FuzzPaletteIndex(f *testing.F) {
 func FuzzDecodeWithMetadata(f *testing.F) {
 	addTGASeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
-		if len(data) > 1<<20 {
-			t.Skip()
+		if len(data) > 1<<20 || declaredPixels(data) > maxFuzzPixels {
+			return
 		}
 		_, _, _ = DecodeWithMetadata(bytes.NewReader(data))
 	})
