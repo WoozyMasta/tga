@@ -78,6 +78,24 @@ func TestCheckedMul(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsPixelBufferOverflow(t *testing.T) {
+	for _, test := range []struct {
+		width int
+		depth int
+	}{
+		{width: maxInt/2 + 1, depth: 16},
+		{width: maxInt/3 + 1, depth: 24},
+		{width: maxInt/4 + 1, depth: 32},
+	} {
+		if _, err := decodeUncompressed(bytes.NewReader(nil), test.width, 1, test.depth, true, false, false); !errors.Is(err, ErrFormat) {
+			t.Fatalf("width=%d depth=%d error = %v, want ErrFormat", test.width, test.depth, err)
+		}
+	}
+	if _, err := decodeGray16(bytes.NewReader(nil), maxInt/2+1, 1, false, false); !errors.Is(err, ErrFormat) {
+		t.Fatalf("gray16 error = %v, want ErrFormat", err)
+	}
+}
+
 func TestDecodeAndConfig_HeaderValidation(t *testing.T) {
 	validTrueColor := makeRawTGA24(1, 1, true)
 	validRLETrueColor := append([]byte{

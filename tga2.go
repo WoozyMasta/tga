@@ -164,7 +164,11 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 		if _, err = r.Seek(devOffset, io.SeekStart); err != nil {
 			return nil, Info{}, err
 		}
-		info.DeveloperArea = make([]byte, dataEnd-devOffset)
+		developerSize, err := checkedInt64ToInt(dataEnd - devOffset)
+		if err != nil {
+			return nil, Info{}, err
+		}
+		info.DeveloperArea = make([]byte, developerSize)
 		if _, err = io.ReadFull(r, info.DeveloperArea); err != nil {
 			return nil, Info{}, err
 		}
@@ -258,6 +262,16 @@ func readTGA2Extension(r io.ReadSeeker, offset, dataEnd int64) ([]byte, error) {
 	}
 
 	return ext, nil
+}
+
+// checkedInt64ToInt converts a file-derived size without overflowing int.
+func checkedInt64ToInt(value int64) (int, error) {
+	if value < 0 || value > int64(maxInt) {
+		return 0, ErrFormat
+	}
+
+	// #nosec G115 -- value is bounded by maxInt above.
+	return int(value), nil
 }
 
 // parseTGA2Metadata converts extension fields and reads the optional thumbnail.

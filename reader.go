@@ -404,8 +404,14 @@ func decodeUncompressed(r io.Reader, w, h, depth int, hasAlpha, flipX, flipY boo
 	if err != nil {
 		return nil, err
 	}
-	if _, err := checkedMul(w, h); err != nil {
+	totalPixels, err := checkedMul(w, h)
+	if err != nil {
 		return nil, err
+	}
+	if depth != 8 {
+		if _, err := checkedMul(totalPixels, 4); err != nil {
+			return nil, err
+		}
 	}
 
 	if depth == 8 {
@@ -462,7 +468,11 @@ func decodeGray16(r io.Reader, w, h int, flipX, flipY bool) (image.Image, error)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := checkedMul(w, h); err != nil {
+	totalPixels, err := checkedMul(w, h)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := checkedMul(totalPixels, 4); err != nil {
 		return nil, err
 	}
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
