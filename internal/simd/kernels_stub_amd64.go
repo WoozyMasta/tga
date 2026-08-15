@@ -23,3 +23,8 @@ func bgrToRGBASSE(dst *byte, src *byte, pixels int)
 //
 //go:noescape
 func rgbaToBGRSSE(dst *byte, src *byte, pixels int)
+
+// rgb555ToRGBASSE converts RGB555 pixels to opaque RGBA using SSE2; pixels must be a multiple of 4.
+//
+//go:noescape
+func rgb555ToRGBASSE(dst *byte, src *byte, pixels int)

@@ -989,6 +989,16 @@ func convertRow16ToNRGBA(dst []byte, src []byte, hasAlpha bool) {
 
 // convertRow16ToNRGBAOpaque converts RGB555 pixels without per-pixel alpha checks.
 func convertRow16ToNRGBAOpaque(dst []byte, src []byte) {
+	bulk := len(src) &^ 7
+	if bulk > 0 {
+		simd.RGB555ToRGBA(dst[:bulk/2*4], src[:bulk])
+	}
+	if bulk == len(src) {
+		return
+	}
+
+	dst = dst[bulk/2*4:]
+	src = src[bulk:]
 	di := 0
 	for si := 0; si < len(src); si += 2 {
 		v := uint16(src[si]) | uint16(src[si+1])<<8
@@ -1005,6 +1015,16 @@ func convertRow16ToNRGBAOpaque(dst []byte, src []byte) {
 
 // convertRow16ToNRGBAAlpha converts A1R5G5B5 pixels with their alpha bit.
 func convertRow16ToNRGBAAlpha(dst []byte, src []byte) {
+	bulk := len(src) &^ 7
+	if bulk > 0 {
+		simd.RGB555AlphaToRGBA(dst[:bulk/2*4], src[:bulk])
+	}
+	if bulk == len(src) {
+		return
+	}
+
+	dst = dst[bulk/2*4:]
+	src = src[bulk:]
 	di := 0
 	for si := 0; si < len(src); si += 2 {
 		v := uint16(src[si]) | uint16(src[si+1])<<8

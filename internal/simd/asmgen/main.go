@@ -44,13 +44,97 @@ func main() {
 	rgbShuf := constBytes("rgbaToBGRShuf", []byte{
 		2, 1, 0, 6, 5, 4, 10, 9, 8, 14, 13, 12, z, z, z, z,
 	})
+	rgb555Mask := constBytes("rgb555Mask", []byte{
+		0x1f, 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x1f, 0x00,
+		0x1f, 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x1f, 0x00,
+	})
+	rgb555Alpha := constBytes("rgb555Alpha", []byte{
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	})
 
 	genSwapRB32SSE(swapMask16)
 	genSwapRB32AVX2(swapMask32)
 	genBGRToRGBASSE(bgrShuf, bgrAlpha)
 	genRGBAToBGRSSE(rgbShuf)
+	genRGB555ToRGBASSE(rgb555Mask, rgb555Alpha, bgrAlpha)
 
 	Generate()
+}
+
+// genRGB555ToRGBASSE converts four little-endian RGB555 pixels to opaque RGBA.
+func genRGB555ToRGBASSE(mask, alpha, outputAlpha Mem) {
+	TEXT("rgb555ToRGBASSE", NOSPLIT, "func(dst, src *byte, pixels int)")
+	Pragma("noescape")
+	Doc("rgb555ToRGBASSE converts RGB555 pixels to opaque RGBA using SSE2; pixels must be a multiple of 4.")
+	dst := Load(Param("dst"), GP64())
+	src := Load(Param("src"), GP64())
+	pixels := Load(Param("pixels"), GP64())
+
+	maskReg := XMM()
+	MOVOU(mask, maskReg)
+	alphaReg := XMM()
+	MOVOU(alpha, alphaReg)
+
+	Label("loop")
+	CMPQ(pixels, Imm(4))
+	JL(LabelRef("done"))
+
+	v := XMM()
+	MOVQ(Mem{Base: src}, v)
+
+	r := XMM()
+	MOVO(v, r)
+	PSRLW(Imm(10), r)
+	PAND(maskReg, r)
+	PSLLW(Imm(3), r)
+	rShift := XMM()
+	MOVO(r, rShift)
+	PSRLW(Imm(5), rShift)
+	POR(rShift, r)
+	PACKUSWB(r, r)
+
+	g := XMM()
+	MOVO(v, g)
+	PSRLW(Imm(5), g)
+	PAND(maskReg, g)
+	PSLLW(Imm(3), g)
+	gShift := XMM()
+	MOVO(g, gShift)
+	PSRLW(Imm(5), gShift)
+	POR(gShift, g)
+	PACKUSWB(g, g)
+
+	b := XMM()
+	MOVO(v, b)
+	PAND(maskReg, b)
+	PSLLW(Imm(3), b)
+	bShift := XMM()
+	MOVO(b, bShift)
+	PSRLW(Imm(5), bShift)
+	POR(bShift, b)
+	PACKUSWB(b, b)
+
+	a := XMM()
+	MOVO(alphaReg, a)
+	PACKUSWB(a, a)
+	rg := XMM()
+	PUNPCKLBW(g, r)
+	PUNPCKLBW(a, b)
+	MOVO(r, rg)
+	PUNPCKLWL(b, rg)
+	outAlpha := XMM()
+	MOVOU(outputAlpha, outAlpha)
+	POR(outAlpha, rg)
+	MOVOU(rg, Mem{Base: dst})
+
+	ADDQ(Imm(8), src)
+	ADDQ(Imm(16), dst)
+	SUBQ(Imm(4), pixels)
+	JMP(LabelRef("loop"))
+
+	Label("done")
+	RET()
 }
 
 // constBytes defines a read-only data constant and returns its address.

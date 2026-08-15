@@ -36,3 +36,35 @@ func scalarRGBAToBGR(dst, src []byte) {
 		di += 3
 	}
 }
+
+// scalarRGB555ToRGBA converts little-endian RGB555 pixels to opaque RGBA pixels.
+func scalarRGB555ToRGBA(dst, src []byte) {
+	di := 0
+	for si := 0; si < len(src); si += 2 {
+		v := uint16(src[si]) | uint16(src[si+1])<<8
+		r := byte((v >> 10) & 0x1f)
+		g := byte((v >> 5) & 0x1f)
+		b := byte(v & 0x1f)
+		dst[di+0] = (r << 3) | (r >> 2)
+		dst[di+1] = (g << 3) | (g >> 2)
+		dst[di+2] = (b << 3) | (b >> 2)
+		dst[di+3] = 0xff
+		di += 4
+	}
+}
+
+// scalarRGB555AlphaToRGBA converts little-endian A1R5G5B5 pixels to RGBA pixels.
+func scalarRGB555AlphaToRGBA(dst, src []byte) {
+	di := 0
+	for si := 0; si < len(src); si += 2 {
+		v := uint16(src[si]) | uint16(src[si+1])<<8
+		r := byte((v >> 10) & 0x1f)
+		g := byte((v >> 5) & 0x1f)
+		b := byte(v & 0x1f)
+		dst[di+0] = (r << 3) | (r >> 2)
+		dst[di+1] = (g << 3) | (g >> 2)
+		dst[di+2] = (b << 3) | (b >> 2)
+		dst[di+3] = byte((v >> 15) * 0xff)
+		di += 4
+	}
+}

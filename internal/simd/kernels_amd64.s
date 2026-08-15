@@ -19,6 +19,12 @@ GLOBL bgrToRGBAAlpha<>(SB), RODATA|NOPTR, $16
 DATA rgbaToBGRShuf<>+0(SB)/16, $"\x02\x01\x00\x06\x05\x04\n\t\b\x0e\r\f\x80\x80\x80\x80"
 GLOBL rgbaToBGRShuf<>(SB), RODATA|NOPTR, $16
 
+DATA rgb555Mask<>+0(SB)/16, $"\x1f\x00\x1f\x00\x1f\x00\x1f\x00\x1f\x00\x1f\x00\x1f\x00\x1f\x00"
+GLOBL rgb555Mask<>(SB), RODATA|NOPTR, $16
+
+DATA rgb555Alpha<>+0(SB)/16, $"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+GLOBL rgb555Alpha<>(SB), RODATA|NOPTR, $16
+
 // func swapRB32SSE(dst *byte, src *byte, pixels int)
 // Requires: SSE2, SSSE3
 TEXT ·swapRB32SSE(SB), NOSPLIT, $0-24
@@ -106,6 +112,59 @@ loop:
 	ADDQ   $0x0c, AX
 	SUBQ   $0x04, DX
 	JMP    loop
+
+done:
+	RET
+
+// func rgb555ToRGBASSE(dst *byte, src *byte, pixels int)
+// Requires: SSE2
+TEXT ·rgb555ToRGBASSE(SB), NOSPLIT, $0-24
+	MOVQ  dst+0(FP), AX
+	MOVQ  src+8(FP), CX
+	MOVQ  pixels+16(FP), DX
+	MOVOU rgb555Mask<>+0(SB), X0
+	MOVOU rgb555Alpha<>+0(SB), X1
+
+loop:
+	CMPQ      DX, $0x04
+	JL        done
+	MOVQ      (CX), X2
+	MOVO      X2, X3
+	PSRLW     $0x0a, X3
+	PAND      X0, X3
+	PSLLW     $0x03, X3
+	MOVO      X3, X4
+	PSRLW     $0x05, X4
+	POR       X4, X3
+	PACKUSWB  X3, X3
+	MOVO      X2, X4
+	PSRLW     $0x05, X4
+	PAND      X0, X4
+	PSLLW     $0x03, X4
+	MOVO      X4, X5
+	PSRLW     $0x05, X5
+	POR       X5, X4
+	PACKUSWB  X4, X4
+	MOVO      X2, X2
+	PAND      X0, X2
+	PSLLW     $0x03, X2
+	MOVO      X2, X5
+	PSRLW     $0x05, X5
+	POR       X5, X2
+	PACKUSWB  X2, X2
+	MOVO      X1, X5
+	PACKUSWB  X5, X5
+	PUNPCKLBW X4, X3
+	PUNPCKLBW X5, X2
+	MOVO      X3, X3
+	PUNPCKLWL X2, X3
+	MOVOU     bgrToRGBAAlpha<>+0(SB), X2
+	POR       X2, X3
+	MOVOU     X3, (AX)
+	ADDQ      $0x08, CX
+	ADDQ      $0x10, AX
+	SUBQ      $0x04, DX
+	JMP       loop
 
 done:
 	RET

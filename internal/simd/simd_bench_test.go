@@ -49,3 +49,13 @@ func BenchmarkRGBAToBGR(b *testing.B) {
 		RGBAToBGR(dst, src)
 	}
 }
+
+// BenchmarkRGB555ToRGBA measures RGB555 expansion on a representative scanline.
+func BenchmarkRGB555ToRGBA(b *testing.B) {
+	dst, src := benchmarkBuffers(2, 4)
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		RGB555ToRGBA(dst, src)
+	}
+}

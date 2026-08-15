@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+* Added an amd64 SIMD path for 15/16-bit true-color pixel expansion,
+  with scalar fallback and alpha-bit preservation.
 * Generic `image.Image` encoding now converts one row at a time,
   avoiding a full-image intermediate `NRGBA` allocation.
 * Encoder palette data and RLE packets now use bounded buffers

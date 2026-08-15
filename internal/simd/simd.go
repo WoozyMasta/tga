@@ -31,10 +31,22 @@ func SwapRB32(dst, src []byte) { swapRB32Fn(dst, src) }
 // and len(dst) must be at least len(src)/4*3. src and dst must not overlap.
 func RGBAToBGR(dst, src []byte) { rgbaToBGRFn(dst, src) }
 
+// RGB555ToRGBA converts little-endian RGB555 pixels to opaque RGBA pixels.
+// len(src) must be a multiple of 2 and len(dst) must be at least len(src)/2*4.
+// src and dst must not overlap.
+func RGB555ToRGBA(dst, src []byte) { rgb555ToRGBAFn(dst, src) }
+
+// RGB555AlphaToRGBA converts little-endian A1R5G5B5 pixels to RGBA pixels.
+// len(src) must be a multiple of 2 and len(dst) must be at least len(src)/2*4.
+// src and dst must not overlap.
+func RGB555AlphaToRGBA(dst, src []byte) { rgb555AlphaToRGBAFn(dst, src) }
+
 // Dispatch points. They default to the scalar implementations and are replaced
 // by SIMD wrappers in init on amd64 when the CPU advertises the needed features.
 var (
-	bgrToRGBAFn = scalarBGRToRGBA
-	swapRB32Fn  = scalarSwapRB32
-	rgbaToBGRFn = scalarRGBAToBGR
+	bgrToRGBAFn         = scalarBGRToRGBA
+	swapRB32Fn          = scalarSwapRB32
+	rgbaToBGRFn         = scalarRGBAToBGR
+	rgb555ToRGBAFn      = scalarRGB555ToRGBA
+	rgb555AlphaToRGBAFn = scalarRGB555AlphaToRGBA
 )

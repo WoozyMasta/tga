@@ -91,3 +91,33 @@ func TestRGBAToBGR_MatchesScalar(t *testing.T) {
 		checkGuard(t, buf, px*3)
 	}
 }
+
+func TestRGB555ToRGBA_MatchesScalar(t *testing.T) {
+	for _, px := range pixelCounts {
+		src := makeSrc(px * 2)
+		want := make([]byte, px*4)
+		scalarRGB555ToRGBA(want, src)
+
+		buf := dstWithGuard(px * 4)
+		RGB555ToRGBA(buf[:px*4], src)
+		if !bytes.Equal(buf[:px*4], want) {
+			t.Fatalf("px=%d: RGB555ToRGBA != scalar\\n got=%x\\nwant=%x", px, buf[:px*4], want)
+		}
+		checkGuard(t, buf, px*4)
+	}
+}
+
+func TestRGB555AlphaToRGBA_MatchesScalar(t *testing.T) {
+	for _, px := range pixelCounts {
+		src := makeSrc(px * 2)
+		want := make([]byte, px*4)
+		scalarRGB555AlphaToRGBA(want, src)
+
+		buf := dstWithGuard(px * 4)
+		RGB555AlphaToRGBA(buf[:px*4], src)
+		if !bytes.Equal(buf[:px*4], want) {
+			t.Fatalf("px=%d: RGB555AlphaToRGBA != scalar\\n got=%x\\nwant=%x", px, buf[:px*4], want)
+		}
+		checkGuard(t, buf, px*4)
+	}
+}

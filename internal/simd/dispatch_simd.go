@@ -31,10 +31,47 @@ func init() {
 		bgrToRGBAFn = bgrToRGBASSEWrapper
 		rgbaToBGRFn = rgbaToBGRSSEWrapper
 		swapRB32Fn = swapRB32SSEWrapper
+		rgb555ToRGBAFn = rgb555ToRGBASSEWrapper
+		rgb555AlphaToRGBAFn = rgb555AlphaToRGBAWrapper
 	}
 
 	if cpu.X86.HasAVX2 {
 		swapRB32Fn = swapRB32AVX2Wrapper
+	}
+}
+
+// rgb555AlphaToRGBAWrapper vectorizes RGB conversion and restores the A1 alpha bit.
+func rgb555AlphaToRGBAWrapper(dst, src []byte) {
+	pixels := len(src) / 2
+	bulk := pixels &^ 3
+
+	if bulk > 0 {
+		rgb555ToRGBASSE(&dst[0], &src[0], bulk)
+	}
+
+	if bulk < pixels {
+		scalarRGB555AlphaToRGBA(dst[bulk*4:], src[bulk*2:])
+	}
+
+	for i := range bulk {
+		dst[i*4+3] = 0
+		if src[i*2+1]&0x80 != 0 {
+			dst[i*4+3] = 0xff
+		}
+	}
+}
+
+// rgb555ToRGBASSEWrapper processes whole 4-pixel groups in SSE2, the rest scalar.
+func rgb555ToRGBASSEWrapper(dst, src []byte) {
+	pixels := len(src) / 2
+	bulk := pixels &^ 3
+
+	if bulk > 0 {
+		rgb555ToRGBASSE(&dst[0], &src[0], bulk)
+	}
+
+	if bulk < pixels {
+		scalarRGB555ToRGBA(dst[bulk*4:], src[bulk*2:])
 	}
 }
 
