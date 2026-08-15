@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
-## Unreleased
+## [1.3.0][] - 2026-08-15
 
 ### Added
 
@@ -65,6 +65,8 @@ and this project adheres to [Semantic Versioning][].
   and rejects unsupported interleaved image data.
 * Indexed TGA decoding now rejects out-of-range palette indices
   and unsupported color-map entry depths.
+
+[1.3.0]: https://github.com/WoozyMasta/tga/compare/v1.2.0...v1.3.0
 
 ## [1.2.0][] - 2026-06-17
 
