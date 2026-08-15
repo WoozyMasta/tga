@@ -15,30 +15,46 @@ import (
 )
 
 const (
-	tga2ExtensionSize = 495
-	tga2FooterSize    = 26
+	tga2ExtensionSize = 495 // tga2ExtensionSize is the fixed extension-area size.
+	tga2FooterSize    = 26  // tga2FooterSize is the footer size including its signature.
 
-	tga2OffAuthor       = 2
-	tga2OffComments     = 43
-	tga2OffTimestamp    = 367
-	tga2OffJobName      = 379
-	tga2OffJobTime      = 420
-	tga2OffSoftwareID   = 426
-	tga2OffSoftwareVer  = 467
-	tga2OffGammaNum     = 478
-	tga2OffGammaDen     = 480
-	tga2OffPostageStamp = 486
-	tga2OffAttrType     = 494
+	tga2OffAuthor       = 2   // tga2OffAuthor points to the author name field.
+	tga2OffComments     = 43  // tga2OffComments points to the four comment lines.
+	tga2OffTimestamp    = 367 // tga2OffTimestamp points to the date/time fields.
+	tga2OffJobName      = 379 // tga2OffJobName points to the job name or ID field.
+	tga2OffJobTime      = 420 // tga2OffJobTime points to the job duration fields.
+	tga2OffSoftwareID   = 426 // tga2OffSoftwareID points to the software ID field.
+	tga2OffSoftwareVer  = 467 // tga2OffSoftwareVer points to the software version.
+	tga2OffKeyColor     = 470 // tga2OffKeyColor points to the A:R:G:B key color.
+	tga2OffPixelAspect  = 474 // tga2OffPixelAspect points to the pixel aspect ratio.
+	tga2OffGammaNum     = 478 // tga2OffGammaNum points to the gamma numerator.
+	tga2OffGammaDen     = 480 // tga2OffGammaDen points to the gamma denominator.
+	tga2OffColorCorrect = 482 // tga2OffColorCorrect points to the color correction table.
+	tga2OffPostageStamp = 486 // tga2OffPostageStamp points to the postage stamp.
+	tga2OffScanLine     = 490 // tga2OffScanLine points to the scan-line table.
+	tga2OffAttrType     = 494 // tga2OffAttrType stores the image attribute type.
 )
 
 const tga2FooterSignature = "TRUEVISION-XFILE.\x00"
 
-// DeveloperField describes one TGA 2.0 developer field.
-type DeveloperField struct {
-	// Data contains the field payload.
-	Data []byte `json:"data,omitempty"`
-	// Tag identifies the application-defined field.
-	Tag uint16 `json:"tag"`
+const (
+	tga2ColorCorrectionEntries = 256
+	tga2ColorCorrectionSize    = tga2ColorCorrectionEntries * 4 * 2
+)
+
+// Info contains metadata read by DecodeWithMetadata.
+type Info struct {
+	// Metadata contains the parsed TGA 2.0 extension area, if present.
+	Metadata *TGA2Metadata `json:"metadata,omitempty"`
+	// ImageID contains the optional TGA image identification field.
+	ImageID []byte `json:"image_id,omitempty"`
+	// DeveloperFields contains fields parsed from the TGA 2.0 developer directory.
+	DeveloperFields []DeveloperField `json:"developer_fields,omitempty"`
+	// DeveloperArea is a deprecated compatibility view
+	// containing field data concatenated in directory order.
+	DeveloperArea []byte `json:"developer_area,omitempty"`
+	// HasFooter reports whether the TGA 2.0 footer signature was found.
+	HasFooter bool `json:"has_footer"`
 }
 
 // TGA2Metadata describes optional TGA 2.0 extension/developer metadata.
@@ -55,6 +71,10 @@ type TGA2Metadata struct {
 	SoftwareID string `json:"software_id,omitempty"`
 	// Comments stores up to 4 lines, 81 bytes each.
 	Comments []string `json:"comments,omitempty"`
+	// ColorCorrectionTable contains exactly 256 A:R:G:B entries when present.
+	ColorCorrectionTable []TGA2ColorCorrectionEntry `json:"color_correction_table,omitempty"`
+	// ScanLineTable contains file-relative offsets for image scan lines.
+	ScanLineTable []uint32 `json:"scan_line_table,omitempty"`
 	// DeveloperFields contains the TGA 2.0 developer fields and their tags.
 	DeveloperFields []DeveloperField `json:"developer_fields,omitempty"`
 	// DeveloperArea is a deprecated compatibility field. When DeveloperFields
@@ -64,12 +84,16 @@ type TGA2Metadata struct {
 	JobDuration time.Duration `json:"job_duration,omitempty"`
 	// Gamma writes gamma as rational value if > 0 and explicit ratio is unset.
 	Gamma float64 `json:"gamma,omitempty"`
+	// PixelAspectRatio describes the pixel width-to-height ratio.
+	PixelAspectRatio TGA2PixelAspectRatio `json:"pixel_aspect_ratio"`
 	// SoftwareVersion is written as numeric version value.
 	SoftwareVersion uint16 `json:"software_version,omitempty"`
 	// GammaNumerator overrides gamma ratio numerator when set with denominator.
 	GammaNumerator uint16 `json:"gamma_numerator,omitempty"`
 	// GammaDenominator overrides gamma ratio denominator when set with numerator.
 	GammaDenominator uint16 `json:"gamma_denominator,omitempty"`
+	// KeyColor is the A:R:G:B key color from the extension area.
+	KeyColor color.NRGBA `json:"key_color"`
 	// SoftwareVersionLetter is written next to SoftwareVersion.
 	SoftwareVersionLetter byte `json:"software_version_letter,omitempty"`
 	// AttributesType controls the image attribute type:
@@ -82,19 +106,26 @@ type TGA2Metadata struct {
 	AttributesType byte `json:"attributes_type,omitempty"`
 }
 
-// Info contains metadata read by DecodeWithMetadata.
-type Info struct {
-	// Metadata contains the parsed TGA 2.0 extension area, if present.
-	Metadata *TGA2Metadata `json:"metadata,omitempty"`
-	// ImageID contains the optional TGA image identification field.
-	ImageID []byte `json:"image_id,omitempty"`
-	// DeveloperFields contains fields parsed from the TGA 2.0 developer directory.
-	DeveloperFields []DeveloperField `json:"developer_fields,omitempty"`
-	// DeveloperArea is a deprecated compatibility view containing field data
-	// concatenated in directory order.
-	DeveloperArea []byte `json:"developer_area,omitempty"`
-	// HasFooter reports whether the TGA 2.0 footer signature was found.
-	HasFooter bool `json:"has_footer"`
+// TGA2ColorCorrectionEntry contains one A:R:G:B correction-table entry.
+type TGA2ColorCorrectionEntry struct {
+	A uint16 `json:"a"` // A is the alpha correction value.
+	R uint16 `json:"r"` // R is the red correction value.
+	G uint16 `json:"g"` // G is the green correction value.
+	B uint16 `json:"b"` // B is the blue correction value.
+}
+
+// DeveloperField describes one TGA 2.0 developer field.
+type DeveloperField struct {
+	Data []byte `json:"data,omitempty"` // Data contains the field payload.
+	Tag  uint16 `json:"tag"`            // Tag identifies the application-defined field.
+}
+
+// TGA2PixelAspectRatio describes the pixel width-to-height ratio.
+type TGA2PixelAspectRatio struct {
+	// Numerator is the pixel width component.
+	Numerator uint16 `json:"numerator,omitempty"`
+	// Denominator is the pixel height component.
+	Denominator uint16 `json:"denominator,omitempty"`
 }
 
 // postageStampFormat describes the uncompressed pixel format of a thumbnail.
@@ -102,15 +133,16 @@ type postageStampFormat struct {
 	palette       color.Palette // palette contains the main image palette for indexed thumbnails.
 	depth         int           // depth is the main image pixel depth in bits.
 	colorMapStart int           // colorMapStart is the first file index declared by the main color map.
+	imageHeight   int           // imageHeight is the number of scan lines in the main image.
 	grayscale     bool          // grayscale selects luminance encoding instead of true-color encoding.
 	alpha         bool          // alpha reports whether 16-bit true-color pixels contain an alpha bit.
 }
 
 // developerDirectoryEntry stores one serialized TGA 2.0 directory record.
 type developerDirectoryEntry struct {
-	tag    uint16 // tag identifies the developer field.
 	offset uint32 // offset points to the field payload from the start of the file.
 	size   uint32 // size is the field payload length in bytes.
+	tag    uint16 // tag identifies the developer field.
 }
 
 // metadataBudget tracks allocations made while reading TGA 2.0 metadata.
@@ -193,8 +225,9 @@ func DecodeWithMetadataOptions(r io.ReadSeeker, opts DecodeOptions) (img image.I
 		}
 
 		format := postageStampFormat{
-			depth: int(h[16]),
-			alpha: h[16] == 16 && h[17]&0x0f == 1,
+			depth:       int(h[16]),
+			alpha:       h[16] == 16 && h[17]&0x0f == 1,
+			imageHeight: int(binary.LittleEndian.Uint16(h[14:16])),
 		}
 		switch h[2] {
 		case typeGrayscale, typeRLEGrayscale:
@@ -452,6 +485,17 @@ func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64, fo
 		SoftwareVersionLetter: ext[tga2OffSoftwareVer+2],
 		AttributesType:        ext[tga2OffAttrType],
 	}
+	keyColor := binary.LittleEndian.Uint32(ext[tga2OffKeyColor : tga2OffKeyColor+4])
+	meta.KeyColor = color.NRGBA{
+		R: uint8(keyColor >> 16), // #nosec G115 -- the shift extracts one byte from a uint32 field.
+		G: uint8(keyColor >> 8),  // #nosec G115 -- the shift extracts one byte from a uint32 field.
+		B: uint8(keyColor),       // #nosec G115 -- the conversion extracts the low byte from a uint32 field.
+		A: uint8(keyColor >> 24), // #nosec G115 -- the shift extracts one byte from a uint32 field.
+	}
+	meta.PixelAspectRatio = TGA2PixelAspectRatio{
+		Numerator:   binary.LittleEndian.Uint16(ext[tga2OffPixelAspect : tga2OffPixelAspect+2]),
+		Denominator: binary.LittleEndian.Uint16(ext[tga2OffPixelAspect+2 : tga2OffPixelAspect+4]),
+	}
 
 	// Zero timestamp fields represent an unset optional timestamp;
 	// non-zero fields must round-trip through time.Date without normalization.
@@ -474,6 +518,45 @@ func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64, fo
 	// Preserve the stored ratio and expose its numeric value when a denominator exists.
 	if meta.GammaDenominator != 0 {
 		meta.Gamma = float64(meta.GammaNumerator) / float64(meta.GammaDenominator)
+	}
+
+	colorCorrectionOffset := int64(binary.LittleEndian.Uint32(ext[tga2OffColorCorrect : tga2OffColorCorrect+4]))
+	if colorCorrectionOffset != 0 {
+		data, err := readTGA2Block(r, colorCorrectionOffset, tga2ColorCorrectionSize, dataEnd, budget)
+		if err != nil {
+			return nil, err
+		}
+		if err := budget.reserve(int64(tga2ColorCorrectionEntries * 8)); err != nil {
+			return nil, err
+		}
+
+		meta.ColorCorrectionTable = make([]TGA2ColorCorrectionEntry, tga2ColorCorrectionEntries)
+		for i := range meta.ColorCorrectionTable {
+			offset := i * 8
+			meta.ColorCorrectionTable[i] = TGA2ColorCorrectionEntry{
+				A: binary.LittleEndian.Uint16(data[offset : offset+2]),
+				R: binary.LittleEndian.Uint16(data[offset+2 : offset+4]),
+				G: binary.LittleEndian.Uint16(data[offset+4 : offset+6]),
+				B: binary.LittleEndian.Uint16(data[offset+6 : offset+8]),
+			}
+		}
+	}
+
+	scanLineOffset := int64(binary.LittleEndian.Uint32(ext[tga2OffScanLine : tga2OffScanLine+4]))
+	if scanLineOffset != 0 {
+		size := int64(format.imageHeight) * 4
+		data, err := readTGA2Block(r, scanLineOffset, size, dataEnd, budget)
+		if err != nil {
+			return nil, err
+		}
+		if err := budget.reserve(size); err != nil {
+			return nil, err
+		}
+
+		meta.ScanLineTable = make([]uint32, format.imageHeight)
+		for i := range meta.ScanLineTable {
+			meta.ScanLineTable[i] = binary.LittleEndian.Uint32(data[i*4 : i*4+4])
+		}
 	}
 
 	postageOffset := int64(binary.LittleEndian.Uint32(ext[tga2OffPostageStamp : tga2OffPostageStamp+4]))
@@ -531,6 +614,31 @@ func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64, fo
 	}
 
 	return meta, nil
+}
+
+// readTGA2Block reads a bounded file-relative metadata block.
+func readTGA2Block(r io.ReadSeeker, offset, size, dataEnd int64, budget *metadataBudget) ([]byte, error) {
+	if size < 0 || offset < int64(headerSize) || offset > dataEnd-size {
+		return nil, ErrFormat
+	}
+	if err := budget.reserve(size); err != nil {
+		return nil, err
+	}
+
+	blockSize, err := checkedInt64ToInt(size)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	block := make([]byte, blockSize)
+	if _, err := io.ReadFull(r, block); err != nil {
+		return nil, err
+	}
+
+	return block, nil
 }
 
 // readASCIIZ reads a fixed-width, zero-terminated TGA text field.
@@ -611,15 +719,19 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 
 // writeTGA2Tail writes optional extension/developer areas and required footer.
 func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata, format postageStampFormat, originBottom bool) error {
+	// A footer is emitted only when the caller supplied TGA 2.0 metadata.
 	if meta == nil {
 		return nil
 	}
 
+	// All extension-area offsets are file-relative,
+	// so capture the current position before reserving the fixed-size extension block.
 	extOffset, err := uint32FromInt64(w.n)
 	if err != nil {
 		return err
 	}
 
+	// Build optional variable-size sections before calculating their offsets.
 	postageStamp, err := buildPostageStamp(meta.Thumbnail, format, originBottom)
 	if err != nil {
 		return err
@@ -633,24 +745,91 @@ func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata, format postageStampFor
 	if err != nil {
 		return err
 	}
-	postageOffset := uint32(0)
-	if len(postageStamp) > 0 {
-		postageOffset = extEnd
+
+	// The scan-line table has one entry per main-image row;
+	// an empty table means that the extension area does not reference one.
+	if len(meta.ScanLineTable) > 0 && len(meta.ScanLineTable) != format.imageHeight {
+		return metadataError("scan_line_table", "length must match image height")
 	}
 
-	ext := buildExtensionArea(meta, postageOffset)
+	// The color-correction table is defined as exactly 256 four-component SHORT entries;
+	// unlike the other sections, it has no variable length.
+	if len(meta.ColorCorrectionTable) != 0 && len(meta.ColorCorrectionTable) != tga2ColorCorrectionEntries {
+		return metadataError("color_correction_table", "must contain 256 entries")
+	}
+
+	// Sections are laid out in the same order as their offsets are assigned.
+	// Keeping this cursor separate from the writer position avoids seeking
+	// and makes every offset stable before the extension area is serialized.
+	cursor := int64(extEnd)
+	scanLineOffset := uint32(0)
+	if len(meta.ScanLineTable) > 0 {
+		scanLineOffset, err = uint32FromInt64(cursor)
+		if err != nil {
+			return err
+		}
+		cursor += int64(len(meta.ScanLineTable)) * 4
+	}
+	postageOffset := uint32(0)
+	if len(postageStamp) > 0 {
+		postageOffset, err = uint32FromInt64(cursor)
+		if err != nil {
+			return err
+		}
+		cursor += int64(len(postageStamp))
+	}
+	colorCorrectionOffset := uint32(0)
+	if len(meta.ColorCorrectionTable) > 0 {
+		colorCorrectionOffset, err = uint32FromInt64(cursor)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Write the fixed extension area first;
+	// it contains references to all variable-size sections written immediately after it.
+	ext := buildExtensionArea(meta, postageOffset, colorCorrectionOffset, scanLineOffset)
 	if _, err := w.Write(ext); err != nil {
 		return err
 	}
 
+	if len(meta.ScanLineTable) > 0 {
+		// Scan-line entries are stored as little-endian file offsets.
+		table := make([]byte, len(meta.ScanLineTable)*4)
+		for i, offset := range meta.ScanLineTable {
+			binary.LittleEndian.PutUint32(table[i*4:i*4+4], offset)
+		}
+		if _, err := w.Write(table); err != nil {
+			return err
+		}
+	}
+
 	if len(postageStamp) > 0 {
+		// The postage stamp is already encoded in the main image pixel format.
 		if _, err := w.Write(postageStamp); err != nil {
+			return err
+		}
+	}
+
+	if len(meta.ColorCorrectionTable) > 0 {
+		// Each correction entry is serialized as A, R, G, B 16-bit values.
+		table := make([]byte, tga2ColorCorrectionSize)
+		for i, entry := range meta.ColorCorrectionTable {
+			offset := i * 8
+			binary.LittleEndian.PutUint16(table[offset:offset+2], entry.A)
+			binary.LittleEndian.PutUint16(table[offset+2:offset+4], entry.R)
+			binary.LittleEndian.PutUint16(table[offset+4:offset+6], entry.G)
+			binary.LittleEndian.PutUint16(table[offset+6:offset+8], entry.B)
+		}
+		if _, err := w.Write(table); err != nil {
 			return err
 		}
 	}
 
 	devOffset := uint32(0)
 	if len(developerFields) > 0 {
+		// Developer payloads follow the extension sections
+		// and are indexed by a directory written after all payloads.
 		entries := make([]developerDirectoryEntry, len(developerFields))
 		for i, field := range developerFields {
 			fieldOffset, err := uint32FromInt64(w.n)
@@ -727,7 +906,7 @@ func writeFooter(w io.Writer, extOffset, devOffset uint32) error {
 }
 
 // buildExtensionArea builds a fixed-size TGA 2.0 extension area block.
-func buildExtensionArea(meta *TGA2Metadata, postageOffset uint32) []byte {
+func buildExtensionArea(meta *TGA2Metadata, postageOffset, colorCorrectionOffset, scanLineOffset uint32) []byte {
 	ext := make([]byte, tga2ExtensionSize)
 	binary.LittleEndian.PutUint16(ext[0:2], tga2ExtensionSize)
 
@@ -737,15 +916,27 @@ func buildExtensionArea(meta *TGA2Metadata, postageOffset uint32) []byte {
 	writeASCIIZ(ext[tga2OffJobName:tga2OffJobName+41], meta.JobName)
 	writeJobDuration(ext[tga2OffJobTime:tga2OffJobTime+6], meta.JobDuration)
 	writeASCIIZ(ext[tga2OffSoftwareID:tga2OffSoftwareID+41], meta.SoftwareID)
+
 	binary.LittleEndian.PutUint16(ext[tga2OffSoftwareVer:tga2OffSoftwareVer+2], meta.SoftwareVersion)
 	ext[tga2OffSoftwareVer+2] = meta.SoftwareVersionLetter
+
+	keyColor := uint32(meta.KeyColor.A)<<24 |
+		uint32(meta.KeyColor.R)<<16 |
+		uint32(meta.KeyColor.G)<<8 |
+		uint32(meta.KeyColor.B)
+
+	binary.LittleEndian.PutUint32(ext[tga2OffKeyColor:tga2OffKeyColor+4], keyColor)
+	binary.LittleEndian.PutUint16(ext[tga2OffPixelAspect:tga2OffPixelAspect+2], meta.PixelAspectRatio.Numerator)
+	binary.LittleEndian.PutUint16(ext[tga2OffPixelAspect+2:tga2OffPixelAspect+4], meta.PixelAspectRatio.Denominator)
 
 	if num, den, ok := resolveGamma(meta); ok {
 		binary.LittleEndian.PutUint16(ext[tga2OffGammaNum:tga2OffGammaNum+2], num)
 		binary.LittleEndian.PutUint16(ext[tga2OffGammaDen:tga2OffGammaDen+2], den)
 	}
 
+	binary.LittleEndian.PutUint32(ext[tga2OffColorCorrect:tga2OffColorCorrect+4], colorCorrectionOffset)
 	binary.LittleEndian.PutUint32(ext[tga2OffPostageStamp:tga2OffPostageStamp+4], postageOffset)
+	binary.LittleEndian.PutUint32(ext[tga2OffScanLine:tga2OffScanLine+4], scanLineOffset)
 	ext[tga2OffAttrType] = meta.AttributesType
 
 	return ext

@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning][].
   configuration inspection, resource limits, encoding, and TGA 2.0 metadata.
 * DecodeConfig now consumes image IDs and color maps
   and returns the actual palette for indexed images.
+* Read and write TGA 2.0 key color, pixel aspect ratio, color correction,
+  and scan-line table metadata.
 
 ### Fixed
 

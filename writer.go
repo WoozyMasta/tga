@@ -143,7 +143,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			}
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: 8, grayscale: true}, settings.OriginBottom)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: 8, grayscale: true, imageHeight: mh}, settings.OriginBottom)
 
 	case *image.Paletted:
 		cMapDepth, err := resolveColorMapDepth(settings.ColorMapDepth, src.Palette)
@@ -204,7 +204,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			}
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: 8, palette: src.Palette}, settings.OriginBottom)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: 8, palette: src.Palette, imageHeight: mh}, settings.OriginBottom)
 
 	case *image.RGBA:
 		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
@@ -246,7 +246,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			return err
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth}, settings.OriginBottom)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth, imageHeight: mh}, settings.OriginBottom)
 
 	case *image.NRGBA:
 		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
@@ -296,7 +296,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			}
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth}, settings.OriginBottom)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth, imageHeight: mh}, settings.OriginBottom)
 
 	default:
 		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
@@ -340,7 +340,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			return err
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth}, settings.OriginBottom)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth, imageHeight: mh}, settings.OriginBottom)
 	}
 }
 
@@ -494,6 +494,12 @@ func validateMetadata(meta *TGA2Metadata) error {
 		if uint64(len(field.Data)) > math.MaxUint32 {
 			return metadataError(fmt.Sprintf("developer_fields[%d]", i), "is too large")
 		}
+	}
+	if len(meta.ColorCorrectionTable) != 0 && len(meta.ColorCorrectionTable) != tga2ColorCorrectionEntries {
+		return metadataError("color_correction_table", "must contain 256 entries")
+	}
+	if uint64(len(meta.ScanLineTable)) > math.MaxUint32/4 {
+		return metadataError("scan_line_table", "is too large")
 	}
 	if thumbnail := meta.Thumbnail; thumbnail != nil {
 		bounds := thumbnail.Bounds()

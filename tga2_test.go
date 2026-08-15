@@ -371,6 +371,36 @@ func TestDecodeWithMetadataOptions_MetadataLimit(t *testing.T) {
 	}
 }
 
+func TestEncodeWithOptions_TGA2ExtensionTables(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 2))
+	correction := make([]TGA2ColorCorrectionEntry, tga2ColorCorrectionEntries)
+	correction[0] = TGA2ColorCorrectionEntry{A: 1, R: 2, G: 3, B: 4}
+	correction[len(correction)-1] = TGA2ColorCorrectionEntry{A: 5, R: 6, G: 7, B: 8}
+	want := &TGA2Metadata{
+		KeyColor:             color.NRGBA{R: 10, G: 20, B: 30, A: 40},
+		PixelAspectRatio:     TGA2PixelAspectRatio{Numerator: 4, Denominator: 3},
+		ColorCorrectionTable: correction,
+		ScanLineTable:        []uint32{100, 200},
+	}
+
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, img, &EncodeOptions{Metadata: want}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+	_, info, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("DecodeWithMetadata: %v", err)
+	}
+	got := info.Metadata
+	if got.KeyColor != want.KeyColor || got.PixelAspectRatio != want.PixelAspectRatio {
+		t.Fatalf("fixed extension fields mismatch: got=%+v want=%+v", got, want)
+	}
+	if !reflect.DeepEqual(got.ColorCorrectionTable, want.ColorCorrectionTable) ||
+		!reflect.DeepEqual(got.ScanLineTable, want.ScanLineTable) {
+		t.Fatalf("extension tables mismatch")
+	}
+}
+
 func TestDecodeWithMetadata_AllowsPostageBeforeExtension(t *testing.T) {
 	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	thumb := image.NewNRGBA(image.Rect(0, 0, 2, 1))
