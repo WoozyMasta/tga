@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning][].
 * Expanded module documentation with runnable examples for decoding,
   configuration inspection, resource limits, encoding, and TGA 2.0 metadata.
 
+### Fixed
+
+* Encode and decode TGA 2.0 developer fields through the standard developer
+  directory instead of treating the footer offset as a raw payload offset.
+
 ## [1.3.1][] - 2026-08-15
 
 ### Added

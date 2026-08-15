@@ -484,6 +484,17 @@ func validateMetadata(meta *TGA2Metadata) error {
 	if uint64(len(meta.DeveloperArea)) > math.MaxUint32 {
 		return metadataError("developer_area", "is too large")
 	}
+	if len(meta.DeveloperFields) > math.MaxUint16 {
+		return metadataError("developer_fields", "more than 65535 fields")
+	}
+	if len(meta.DeveloperFields) > 0 && len(meta.DeveloperArea) > 0 {
+		return metadataError("developer_fields", "cannot be combined with developer_area")
+	}
+	for i, field := range meta.DeveloperFields {
+		if uint64(len(field.Data)) > math.MaxUint32 {
+			return metadataError(fmt.Sprintf("developer_fields[%d]", i), "is too large")
+		}
+	}
 	if thumbnail := meta.Thumbnail; thumbnail != nil {
 		bounds := thumbnail.Bounds()
 		if bounds.Dx() <= 0 || bounds.Dy() <= 0 || bounds.Dx() > math.MaxUint8 || bounds.Dy() > math.MaxUint8 {

@@ -118,14 +118,8 @@ func TestEncodeWithOptions_TGA2MetadataWritesFooterAndAreas(t *testing.T) {
 		t.Fatalf("postage dimensions mismatch: %dx%d", postage[0], postage[1])
 	}
 
-	devStart := int(devOffset)
-	devEnd := devStart + len(dev)
-	if devStart < 0 || devEnd > len(data) {
-		t.Fatalf("developer area offset out of range")
-	}
-
-	if !bytes.Equal(data[devStart:devEnd], dev) {
-		t.Fatalf("developer area payload mismatch")
+	if got := binary.LittleEndian.Uint16(data[devOffset : devOffset+2]); got != 1 {
+		t.Fatalf("developer directory field count=%d, want=1", got)
 	}
 
 	decoded, err := Decode(bytes.NewReader(data))
@@ -160,6 +154,98 @@ func TestEncodeWithOptions_TGA2MetadataWritesFooterAndAreas(t *testing.T) {
 	}
 	if !bytes.Equal(info.DeveloperArea, dev) {
 		t.Fatalf("developer area mismatch: got=%x want=%x", info.DeveloperArea, dev)
+	}
+	if len(info.DeveloperFields) != 1 || info.DeveloperFields[0].Tag != 0 ||
+		!bytes.Equal(info.DeveloperFields[0].Data, dev) {
+		t.Fatalf("developer fields mismatch: %+v", info.DeveloperFields)
+	}
+}
+
+func TestEncodeWithOptions_TGA2DeveloperDirectory(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	meta := &TGA2Metadata{DeveloperFields: []DeveloperField{
+		{Tag: 7, Data: []byte{1, 2, 3}},
+		{Tag: 42, Data: []byte{4, 5}},
+	}}
+
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, img, &EncodeOptions{Metadata: meta}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+
+	_, info, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("DecodeWithMetadata: %v", err)
+	}
+	if !reflect.DeepEqual(info.DeveloperFields, meta.DeveloperFields) {
+		t.Fatalf("developer fields mismatch: got=%+v want=%+v", info.DeveloperFields, meta.DeveloperFields)
+	}
+}
+
+func TestDecodeWithMetadata_RejectsInvalidDeveloperDirectory(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, img, &EncodeOptions{
+		Metadata: &TGA2Metadata{DeveloperFields: []DeveloperField{{Tag: 1, Data: []byte{1}}}},
+	}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+
+	data := append([]byte(nil), buf.Bytes()...)
+	footer := len(data) - tga2FooterSize
+	devOffset := binary.LittleEndian.Uint32(data[footer+4 : footer+8])
+	entryOffset := int(devOffset) + 2
+	binary.LittleEndian.PutUint32(data[entryOffset+2:entryOffset+6], uint32(len(data)))
+	if _, _, err := DecodeWithMetadata(bytes.NewReader(data)); err != ErrFormat {
+		t.Fatalf("invalid developer field offset error=%v, want=%v", err, ErrFormat)
+	}
+}
+
+func TestDecodeWithMetadata_AllowsDeveloperDirectoryBeforeExtension(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, img, &EncodeOptions{
+		Metadata: &TGA2Metadata{DeveloperFields: []DeveloperField{{Tag: 7, Data: []byte{1, 2, 3}}}},
+	}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+
+	original := buf.Bytes()
+	footerStart := len(original) - tga2FooterSize
+	originalFooter := original[footerStart:]
+	extOffset := int(binary.LittleEndian.Uint32(originalFooter[:4]))
+	devOffset := int(binary.LittleEndian.Uint32(originalFooter[4:8]))
+	fieldOffset := int(binary.LittleEndian.Uint32(original[devOffset+4 : devOffset+8]))
+	prefix := original[:extOffset]
+	field := original[fieldOffset:devOffset]
+	directory := append([]byte(nil), original[devOffset:footerStart]...)
+	ext := original[extOffset:fieldOffset]
+
+	rearranged := make([]byte, 0, len(original))
+	rearranged = append(rearranged, prefix...)
+	newFieldOffset := len(rearranged)
+	rearranged = append(rearranged, field...)
+	newDevOffset := len(rearranged)
+	rearranged = append(rearranged, directory...)
+	newExtOffset := len(rearranged)
+	rearranged = append(rearranged, ext...)
+	rearranged = append(rearranged, originalFooter...)
+
+	binary.LittleEndian.PutUint32(
+		rearranged[newDevOffset+4:newDevOffset+8],
+		uint32(newFieldOffset),
+	)
+	newFooterStart := len(rearranged) - tga2FooterSize
+	binary.LittleEndian.PutUint32(rearranged[newFooterStart:newFooterStart+4], uint32(newExtOffset))
+	binary.LittleEndian.PutUint32(rearranged[newFooterStart+4:newFooterStart+8], uint32(newDevOffset))
+
+	_, info, err := DecodeWithMetadata(bytes.NewReader(rearranged))
+	if err != nil {
+		t.Fatalf("DecodeWithMetadata: %v", err)
+	}
+	if len(info.DeveloperFields) != 1 || info.DeveloperFields[0].Tag != 7 ||
+		!bytes.Equal(info.DeveloperFields[0].Data, []byte{1, 2, 3}) {
+		t.Fatalf("developer fields mismatch: %+v", info.DeveloperFields)
 	}
 }
 

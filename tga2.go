@@ -33,6 +33,14 @@ const (
 
 const tga2FooterSignature = "TRUEVISION-XFILE.\x00"
 
+// DeveloperField describes one TGA 2.0 developer field.
+type DeveloperField struct {
+	// Data contains the field payload.
+	Data []byte `json:"data,omitempty"`
+	// Tag identifies the application-defined field.
+	Tag uint16 `json:"tag"`
+}
+
 // TGA2Metadata describes optional TGA 2.0 extension/developer metadata.
 type TGA2Metadata struct {
 	// Timestamp writes local date/time fields if non-zero.
@@ -47,7 +55,10 @@ type TGA2Metadata struct {
 	SoftwareID string `json:"software_id,omitempty"`
 	// Comments stores up to 4 lines, 81 bytes each.
 	Comments []string `json:"comments,omitempty"`
-	// DeveloperArea writes raw developer-area bytes.
+	// DeveloperFields contains the TGA 2.0 developer fields and their tags.
+	DeveloperFields []DeveloperField `json:"developer_fields,omitempty"`
+	// DeveloperArea is a deprecated compatibility field. When DeveloperFields
+	// is empty, its bytes are written as one field with tag zero.
 	DeveloperArea []byte `json:"developer_area,omitempty"`
 	// JobDuration is encoded as hours/minutes/seconds.
 	JobDuration time.Duration `json:"job_duration,omitempty"`
@@ -77,10 +88,20 @@ type Info struct {
 	Metadata *TGA2Metadata `json:"metadata,omitempty"`
 	// ImageID contains the optional TGA image identification field.
 	ImageID []byte `json:"image_id,omitempty"`
-	// DeveloperArea contains bytes between the developer-area offset and footer.
+	// DeveloperFields contains fields parsed from the TGA 2.0 developer directory.
+	DeveloperFields []DeveloperField `json:"developer_fields,omitempty"`
+	// DeveloperArea is a deprecated compatibility view containing field data
+	// concatenated in directory order.
 	DeveloperArea []byte `json:"developer_area,omitempty"`
 	// HasFooter reports whether the TGA 2.0 footer signature was found.
 	HasFooter bool `json:"has_footer"`
+}
+
+// developerDirectoryEntry stores one serialized TGA 2.0 directory record.
+type developerDirectoryEntry struct {
+	tag    uint16 // tag identifies the developer field.
+	offset uint32 // offset points to the field payload from the start of the file.
+	size   uint32 // size is the field payload length in bytes.
 }
 
 // DecodeWithMetadata decodes a seekable TGA stream and reads its TGA 2.0 metadata.
@@ -156,25 +177,70 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 	}
 
 	if devOffset != 0 {
-		// The writer emits the developer area immediately before the footer,
-		// so its size is derived from the developer offset and the footer boundary.
-		if devOffset >= dataEnd || (extOffset != 0 && devOffset < extOffset) {
-			return nil, Info{}, ErrFormat
-		}
-		if _, err = r.Seek(devOffset, io.SeekStart); err != nil {
-			return nil, Info{}, err
-		}
-		developerSize, err := checkedInt64ToInt(dataEnd - devOffset)
+		info.DeveloperFields, err = readDeveloperDirectory(r, devOffset, dataEnd)
 		if err != nil {
 			return nil, Info{}, err
 		}
-		info.DeveloperArea = make([]byte, developerSize)
-		if _, err = io.ReadFull(r, info.DeveloperArea); err != nil {
-			return nil, Info{}, err
+		for _, field := range info.DeveloperFields {
+			info.DeveloperArea = append(info.DeveloperArea, field.Data...)
 		}
 	}
 
 	return img, info, nil
+}
+
+// readDeveloperDirectory reads the directory and all fields it references.
+func readDeveloperDirectory(r io.ReadSeeker, offset, dataEnd int64) ([]DeveloperField, error) {
+	if offset < int64(headerSize) || offset > dataEnd-2 {
+		return nil, ErrFormat
+	}
+	if _, err := r.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	var countBytes [2]byte
+	if _, err := io.ReadFull(r, countBytes[:]); err != nil {
+		return nil, err
+	}
+	count := int(binary.LittleEndian.Uint16(countBytes[:]))
+	directorySize := int64(2) + int64(count)*10
+	if directorySize > dataEnd-offset {
+		return nil, ErrFormat
+	}
+
+	directory := make([]byte, directorySize-2)
+	if _, err := io.ReadFull(r, directory); err != nil {
+		return nil, err
+	}
+
+	fields := make([]DeveloperField, 0, count)
+	for i := range count {
+		entry := directory[i*10 : (i+1)*10]
+		fieldOffset := int64(binary.LittleEndian.Uint32(entry[2:6]))
+		fieldSize := int64(binary.LittleEndian.Uint32(entry[6:10]))
+		if fieldOffset < int64(headerSize) || fieldOffset > dataEnd || fieldSize > dataEnd-fieldOffset {
+			return nil, ErrFormat
+		}
+
+		size, err := checkedInt64ToInt(fieldSize)
+		if err != nil {
+			return nil, err
+		}
+		data := make([]byte, size)
+		if _, err := r.Seek(fieldOffset, io.SeekStart); err != nil {
+			return nil, err
+		}
+		if _, err := io.ReadFull(r, data); err != nil {
+			return nil, err
+		}
+
+		fields = append(fields, DeveloperField{
+			Tag:  binary.LittleEndian.Uint16(entry[:2]),
+			Data: data,
+		})
+	}
+
+	return fields, nil
 }
 
 // applyTGA2AlphaSemantics maps TGA 2.0 alpha attributes to Go image models.
@@ -445,20 +511,18 @@ func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata) error {
 	if err != nil {
 		return err
 	}
+	developerFields, err := developerFieldsForEncoding(meta)
+	if err != nil {
+		return err
+	}
 
 	extEnd, err := uint32FromInt64(int64(extOffset) + int64(tga2ExtensionSize))
 	if err != nil {
 		return err
 	}
-	postageEnd := int64(extEnd)
 	postageOffset := uint32(0)
 	if len(postageStamp) > 0 {
 		postageOffset = extEnd
-		postageEndOffset, err := uint32FromInt64(postageEnd + int64(len(postageStamp)))
-		if err != nil {
-			return err
-		}
-		postageEnd = int64(postageEndOffset)
 	}
 
 	ext := buildExtensionArea(meta, postageOffset)
@@ -473,18 +537,69 @@ func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata) error {
 	}
 
 	devOffset := uint32(0)
-	if len(meta.DeveloperArea) > 0 {
-		devOffset, err = uint32FromInt64(postageEnd)
+	if len(developerFields) > 0 {
+		entries := make([]developerDirectoryEntry, len(developerFields))
+		for i, field := range developerFields {
+			fieldOffset, err := uint32FromInt64(w.n)
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(field.Data); err != nil {
+				return err
+			}
+			fieldSize, err := uint32FromInt64(int64(len(field.Data)))
+			if err != nil {
+				return err
+			}
+			entries[i] = developerDirectoryEntry{
+				tag:    field.Tag,
+				offset: fieldOffset,
+				size:   fieldSize,
+			}
+		}
+
+		devOffset, err = uint32FromInt64(w.n)
 		if err != nil {
 			return err
 		}
 
-		if _, err := w.Write(meta.DeveloperArea); err != nil {
+		directory := make([]byte, 2+len(entries)*10)
+		fieldCount, err := uint16FromInt(len(entries))
+		if err != nil {
+			return err
+		}
+
+		binary.LittleEndian.PutUint16(directory[:2], fieldCount)
+		for i, entry := range entries {
+			offset := 2 + i*10
+			binary.LittleEndian.PutUint16(directory[offset:offset+2], entry.tag)
+			binary.LittleEndian.PutUint32(directory[offset+2:offset+6], entry.offset)
+			binary.LittleEndian.PutUint32(directory[offset+6:offset+10], entry.size)
+		}
+		if _, err := w.Write(directory); err != nil {
 			return err
 		}
 	}
 
 	return writeFooter(w, extOffset, devOffset)
+}
+
+// developerFieldsForEncoding converts the legacy raw field into one tagged field.
+func developerFieldsForEncoding(meta *TGA2Metadata) ([]DeveloperField, error) {
+	if len(meta.DeveloperFields) > 0 && len(meta.DeveloperArea) > 0 {
+		return nil, metadataError("developer_fields", "cannot be combined with developer_area")
+	}
+	if len(meta.DeveloperFields) > math.MaxUint16 {
+		return nil, metadataError("developer_fields", "more than 65535 fields")
+	}
+	if len(meta.DeveloperFields) > 0 {
+		return meta.DeveloperFields, nil
+	}
+	if len(meta.DeveloperArea) == 0 {
+		return nil, nil
+	}
+
+	return []DeveloperField{{Data: meta.DeveloperArea}}, nil
 }
 
 // writeFooter writes TGA 2.0 footer with extension/developer offsets.
