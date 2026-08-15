@@ -6,7 +6,10 @@ Go package for decoding and encoding TGA (Truevision TARGA) images.
   bit depths `8`, `15`, `16`, `24`, `32`.
 * Encode: grayscale, true-color (`16`/`24`/`32`), and paletted (`8`) output;
   optional RLE compression.
-* TGA 2.0 write support: footer, extension/developer areas, and metadata fields.
+* TGA 2.0 read support:
+  footer, extension/developer areas, metadata, and postage-stamp thumbnails.
+* TGA 2.0 write support:
+  footer, extension/developer areas, and metadata fields.
 * Encode options: `PixelDepth`, `ColorMapDepth`, `OriginBottom`, `ImageID`.
 
 Decode output types are specialized by format:
@@ -39,7 +42,7 @@ img, err := tga.DecodeWithOptions(r, tga.DecodeOptions{
   MaxDecodedBytes: 64 * 1024 * 1024,
 })
 
-// Decode TGA 2.0 metadata from a seekable reader.
+// Decode TGA 2.0 metadata, including optional thumbnails, from a seekable reader.
 img, info, err := tga.DecodeWithMetadata(readSeeker)
 
 // Encode
