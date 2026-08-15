@@ -9,7 +9,26 @@ permissions:
   contents: write
 
 jobs:
+  compatibility:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ['1.25.x']
+        goarch: ['386']
+    env:
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Run compatibility tests
+        run: go test ./...
+
   release:
+    needs: compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
