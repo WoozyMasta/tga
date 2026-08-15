@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## Unreleased
+
+### Added
+
+* Curated external TGA fixtures with PNG oracles and smoke tests for
+  16-bit true-color/grayscale and RLE color-mapped data.
+
 ## [1.3.0][] - 2026-08-15
 
 ### Added
