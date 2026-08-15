@@ -487,15 +487,20 @@ func readASCIIZ(src []byte) string {
 
 // readCommentLines reads the four fixed-width comment fields.
 func readCommentLines(src []byte) []string {
-	comments := make([]string, 0, 4)
+	comments := make([]string, 4)
+	last := -1
 	for i := range 4 {
-		line := readASCIIZ(src[i*81 : (i+1)*81])
-		if line != "" {
-			comments = append(comments, line)
+		comments[i] = readASCIIZ(src[i*81 : (i+1)*81])
+		if comments[i] != "" {
+			last = i
 		}
 	}
 
-	return comments
+	if last < 0 {
+		return nil
+	}
+
+	return comments[:last+1]
 }
 
 // readTimestamp decodes and validates the extension-area timestamp.

@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning][].
   without compression.
 * Apply TGA 2.0 opaque-alpha semantics even when a physical alpha channel
   is present but the image descriptor reports zero attribute bits.
+* Preserve empty TGA 2.0 comment lines that occur between non-empty lines.
 
 ## [1.3.1][] - 2026-08-15
 

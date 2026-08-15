@@ -326,6 +326,25 @@ func TestDecodeWithMetadata_AllowsDeveloperDirectoryBeforeExtension(t *testing.T
 	}
 }
 
+func TestDecodeWithMetadata_PreservesInternalEmptyComments(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	want := []string{"first", "", "third"}
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, img, &EncodeOptions{
+		Metadata: &TGA2Metadata{Comments: want},
+	}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+
+	_, info, err := DecodeWithMetadata(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("DecodeWithMetadata: %v", err)
+	}
+	if !reflect.DeepEqual(info.Metadata.Comments, want) {
+		t.Fatalf("comments=%q, want=%q", info.Metadata.Comments, want)
+	}
+}
+
 func TestDecodeWithMetadata_AllowsPostageBeforeExtension(t *testing.T) {
 	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	thumb := image.NewNRGBA(image.Rect(0, 0, 2, 1))
