@@ -268,13 +268,9 @@ func decode(r io.Reader, opts DecodeOptions) (img image.Image, err error) {
 func validateDecodeSize(header parsedHeader, opts DecodeOptions) error {
 	// Validate the final image allocation, not the compressed input length:
 	// a tiny RLE stream can expand to a large image.
-	pixels, err := checkedMul(header.width, header.height)
-	if err != nil {
-		return err
-	}
-
-	// #nosec G115 -- checkedMul returns a non-negative result.
-	if opts.MaxPixels > 0 && uint64(pixels) > opts.MaxPixels {
+	// #nosec G115 -- header dimensions are validated non-negative uint16 values.
+	pixelCount := uint64(header.width) * uint64(header.height)
+	if opts.MaxPixels > 0 && pixelCount > opts.MaxPixels {
 		return ErrResourceLimit
 	}
 
@@ -288,6 +284,17 @@ func validateDecodeSize(header parsedHeader, opts DecodeOptions) error {
 		}
 	}
 
+	// Apply the byte limit before converting the pixel count to native int.
+	// This keeps resource-limit errors deterministic on 32-bit platforms
+	// when a valid 16-bit TGA dimension product exceeds the platform int range.
+	if opts.MaxDecodedBytes > 0 && pixelCount > opts.MaxDecodedBytes/uint64(bytesPerPixel) {
+		return ErrResourceLimit
+	}
+
+	pixels, err := checkedMul(header.width, header.height)
+	if err != nil {
+		return err
+	}
 	decodedBytes, err := checkedMul(pixels, bytesPerPixel)
 	if err != nil {
 		return err
