@@ -17,6 +17,8 @@ jobs:
         with:
           go-version: '1.26'
 
+      - uses: rvben/rumdl@v0
+
       - name: Run CI
         run: make ci test-race test-race-pure fuzz FUZZ_TIME=10s
 
@@ -29,3 +31,11 @@ jobs:
           tag: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           bodyFile: release.md
+
+      - name: Request pkg.go.dev reindex
+        env:
+          MODULE: github.com/woozymasta/tga
+          VERSION: ${{ github.ref_name }}
+        run: >-
+          curl -sSfX POST --retry 3 --retry-delay 2
+          "https://pkg.go.dev/fetch/${MODULE}@${VERSION}"
