@@ -199,7 +199,12 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 		if err != nil {
 			return nil, Info{}, err
 		}
-		img, err = applyTGA2AlphaSemantics(img, info.Metadata.AttributesType, h[17])
+		img, err = applyTGA2AlphaSemantics(
+			img,
+			info.Metadata.AttributesType,
+			hasPhysicalAlpha(h),
+			h[17]&0x0f != 0,
+		)
 		if err != nil {
 			return nil, Info{}, err
 		}
@@ -273,26 +278,43 @@ func readDeveloperDirectory(r io.ReadSeeker, offset, dataEnd int64) ([]Developer
 }
 
 // applyTGA2AlphaSemantics maps TGA 2.0 alpha attributes to Go image models.
-func applyTGA2AlphaSemantics(img image.Image, attributesType, descriptor byte) (image.Image, error) {
-	hasAlpha := descriptor&0x0f != 0
+// hasPhysicalAlpha reports whether the encoded pixel format contains alpha data.
+func hasPhysicalAlpha(header [headerSize]byte) bool {
+	switch header[2] {
+	case typeGrayscale, typeRLEGrayscale:
+		return header[16] == 16
+
+	case typeTrueColor, typeRLETrueColor:
+		return header[16] == 32 || (header[16] == 16 && header[17]&0x0f == 1)
+
+	case typePaletted, typeRLEPaletted:
+		return header[7] == 32
+
+	default:
+		return false
+	}
+}
+
+// applyTGA2AlphaSemantics applies metadata semantics to physical alpha data.
+func applyTGA2AlphaSemantics(img image.Image, attributesType byte, physicalAlpha, descriptorAlpha bool) (image.Image, error) {
 	switch attributesType {
 	case 0, 1:
 		// No alpha or ignorable alpha is represented as fully opaque pixels.
-		if hasAlpha {
+		if physicalAlpha {
 			return makeOpaqueNRGBA(img), nil
 		}
 		return img, nil
 
 	case 2, 3:
 		// Undefined-but-preserved and useful unassociated alpha are straight.
-		if !hasAlpha {
+		if !descriptorAlpha {
 			return nil, ErrFormat
 		}
 		return img, nil
 
 	case 4:
 		// Useful associated alpha is represented by the premultiplied RGBA model.
-		if !hasAlpha {
+		if !descriptorAlpha {
 			return nil, ErrFormat
 		}
 		return makePremultipliedRGBA(img), nil

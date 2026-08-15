@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning][].
   directory instead of treating the footer offset as a raw payload offset.
 * Encode and decode TGA 2.0 postage stamps in the main image pixel format,
   without compression.
+* Apply TGA 2.0 opaque-alpha semantics even when a physical alpha channel
+  is present but the image descriptor reports zero attribute bits.
 
 ## [1.3.1][] - 2026-08-15
 

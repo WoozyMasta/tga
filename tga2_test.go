@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -463,6 +464,38 @@ func TestDecodeWithMetadata_AlphaAttributes(t *testing.T) {
 	data[extOffset+uint32(tga2OffAttrType)] = 3
 	if _, _, err := DecodeWithMetadata(bytes.NewReader(data)); err != ErrFormat {
 		t.Fatalf("missing descriptor alpha error=%v, want=%v", err, ErrFormat)
+	}
+}
+
+func TestDecodeWithMetadata_AttributesIgnorePhysicalAlphaWithoutDescriptor(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 100, G: 50, B: 25, A: 128})
+
+	for _, attributes := range []byte{0, 1} {
+		t.Run(fmt.Sprintf("attributes-%d", attributes), func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := EncodeWithOptions(&buf, src, &EncodeOptions{
+				Metadata: &TGA2Metadata{AttributesType: 3},
+			}); err != nil {
+				t.Fatalf("EncodeWithOptions: %v", err)
+			}
+
+			data := append([]byte(nil), buf.Bytes()...)
+			data[17] &= 0xf0
+			footer := len(data) - tga2FooterSize
+			extOffset := binary.LittleEndian.Uint32(data[footer : footer+4])
+			data[extOffset+uint32(tga2OffAttrType)] = attributes
+
+			decoded, _, err := DecodeWithMetadata(bytes.NewReader(data))
+			if err != nil {
+				t.Fatalf("DecodeWithMetadata: %v", err)
+			}
+			got := color.NRGBAModel.Convert(decoded.At(0, 0)).(color.NRGBA)
+			want := color.NRGBA{R: 100, G: 50, B: 25, A: 255}
+			if got != want {
+				t.Fatalf("decoded pixel=%+v, want=%+v", got, want)
+			}
+		})
 	}
 }
 
