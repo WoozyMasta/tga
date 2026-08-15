@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning][].
 * Apply TGA 2.0 opaque-alpha semantics even when a physical alpha channel
   is present but the image descriptor reports zero attribute bits.
 * Preserve empty TGA 2.0 comment lines that occur between non-empty lines.
+* Decode true-color images that contain an unused legacy color map.
 
 ## [1.3.1][] - 2026-08-15
 

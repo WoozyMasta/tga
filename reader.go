@@ -351,9 +351,8 @@ func validateImageSpec(imgType uint8, pixelDepth int, hasCMap bool, cMapLen int)
 		if !isTrueColorDepth(pixelDepth) {
 			return ErrUnsupported
 		}
-		if hasCMap {
-			return ErrFormat
-		}
+		// Some legacy writers store an unused color map with true-color data.
+		// The image type determines whether pixel indices use the map.
 
 	case typeGrayscale, typeRLEGrayscale:
 		if pixelDepth != 8 && pixelDepth != 16 {

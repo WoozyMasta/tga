@@ -117,8 +117,10 @@ func TestDecodeAndConfig_HeaderValidation(t *testing.T) {
 
 	invalidColorMapType := append([]byte(nil), validTrueColor...)
 	invalidColorMapType[1] = 2
-	trueColorWithColorMap := append([]byte(nil), validTrueColor...)
+	trueColorWithColorMap := append([]byte(nil), validTrueColor[:headerSize]...)
 	trueColorWithColorMap[1] = 1
+	trueColorWithColorMap[5], trueColorWithColorMap[7] = 1, 24
+	trueColorWithColorMap = append(trueColorWithColorMap, 0, 255, 0, 0, 0, 255)
 	unsupportedDepth := append([]byte(nil), validTrueColor...)
 	unsupportedDepth[16] = 12
 	zeroColorMapDepth := append([]byte(nil), validPaletted...)
@@ -138,7 +140,7 @@ func TestDecodeAndConfig_HeaderValidation(t *testing.T) {
 		{name: "paletted", data: validPaletted},
 		{name: "short", data: validTrueColor[:headerSize-1], wantErr: ErrHeaderTooShort},
 		{name: "invalid_color_map_type", data: invalidColorMapType, wantErr: ErrFormat},
-		{name: "true_color_with_color_map", data: trueColorWithColorMap, wantErr: ErrFormat},
+		{name: "true_color_with_color_map", data: trueColorWithColorMap},
 		{name: "unsupported_depth", data: unsupportedDepth, wantErr: ErrUnsupported},
 		{name: "zero_color_map_depth", data: zeroColorMapDepth, wantErr: ErrUnsupported},
 		{name: "zero_width", data: zeroWidth, wantErr: ErrFormat},
@@ -161,6 +163,25 @@ func TestDecodeAndConfig_HeaderValidation(t *testing.T) {
 				t.Fatalf("Decode error = %v, want %v", decodeErr, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestDecode_TrueColorWithUnusedColorMap(t *testing.T) {
+	data := append([]byte{
+		0, 1, typeTrueColor,
+		0, 0, 1, 0, 24,
+		0, 0, 0, 0,
+		1, 0, 1, 0,
+		24, maskOriginTop,
+	}, 0, 255, 0, 0, 0, 255)
+
+	decoded, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	want := color.NRGBA{R: 255, G: 0, B: 0, A: 255}
+	if got := color.NRGBAModel.Convert(decoded.At(0, 0)).(color.NRGBA); got != want {
+		t.Fatalf("pixel=%+v, want=%+v", got, want)
 	}
 }
 
