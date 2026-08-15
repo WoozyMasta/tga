@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning][].
   and returns the actual palette for indexed images.
 * Read and write TGA 2.0 key color, pixel aspect ratio, color correction,
   and scan-line table metadata.
+* Reuse decoded pixel storage during TGA 2.0 alpha postprocessing
+  to avoid an additional full-image allocation.
 
 ### Fixed
 

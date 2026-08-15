@@ -407,8 +407,19 @@ func applyTGA2AlphaSemantics(img image.Image, attributesType byte, physicalAlpha
 	}
 }
 
-// makeOpaqueNRGBA returns a copy with alpha discarded and RGB preserved.
+// makeOpaqueNRGBA discards alpha in-place for decoder-owned NRGBA storage.
 func makeOpaqueNRGBA(src image.Image) *image.NRGBA {
+	if nrgba, ok := src.(*image.NRGBA); ok {
+		bounds := nrgba.Bounds()
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			row := nrgba.Pix[nrgba.PixOffset(bounds.Min.X, y):]
+			for i := 3; i < bounds.Dx()*4; i += 4 {
+				row[i] = 0xff
+			}
+		}
+		return nrgba
+	}
+
 	b := src.Bounds()
 	dst := image.NewNRGBA(b)
 	for y := b.Min.Y; y < b.Max.Y; y++ {
@@ -421,20 +432,14 @@ func makeOpaqueNRGBA(src image.Image) *image.NRGBA {
 	return dst
 }
 
-// makePremultipliedRGBA preserves decoded channel bytes in image.RGBA.
+// makePremultipliedRGBA reuses decoder-owned NRGBA storage as premultiplied RGBA.
 func makePremultipliedRGBA(src image.Image) *image.RGBA {
-	b := src.Bounds()
-	dst := image.NewRGBA(b)
 	if nrgba, ok := src.(*image.NRGBA); ok {
-		for y := b.Min.Y; y < b.Max.Y; y++ {
-			for x := b.Min.X; x < b.Max.X; x++ {
-				c := nrgba.NRGBAAt(x, y)
-				dst.SetRGBA(x, y, color.RGBA(c))
-			}
-		}
-		return dst
+		return &image.RGBA{Pix: nrgba.Pix, Stride: nrgba.Stride, Rect: nrgba.Rect}
 	}
 
+	b := src.Bounds()
+	dst := image.NewRGBA(b)
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
 			dst.SetRGBA(x, y, color.RGBAModel.Convert(src.At(x, y)).(color.RGBA))

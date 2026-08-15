@@ -6,6 +6,7 @@ package tga
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
@@ -173,6 +174,35 @@ func BenchmarkDecode(b *testing.B) {
 				})
 			}
 		}
+	}
+}
+
+// BenchmarkDecodeWithMetadataAlpha measures TGA 2.0 alpha postprocessing
+// on a representative full-HD true-color image.
+func BenchmarkDecodeWithMetadataAlpha(b *testing.B) {
+	src := buildNRGBA(1920, 1080)
+	for _, attributes := range []byte{1, 4} {
+		var encoded bytes.Buffer
+		if err := EncodeWithOptions(&encoded, src, &EncodeOptions{
+			Metadata: &TGA2Metadata{AttributesType: 3},
+		}); err != nil {
+			b.Fatalf("EncodeWithOptions attributes=%d: %v", attributes, err)
+		}
+		data := append([]byte(nil), encoded.Bytes()...)
+		footer := len(data) - tga2FooterSize
+		extOffset := int(binary.LittleEndian.Uint32(data[footer : footer+4]))
+		data[extOffset+tga2OffAttrType] = attributes
+
+		b.Run(fmt.Sprintf("attributes-%d", attributes), func(b *testing.B) {
+			r := bytes.NewReader(data)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				r.Reset(data)
+				if _, _, err := DecodeWithMetadata(r); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
