@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning][].
   is present but the image descriptor reports zero attribute bits.
 * Preserve empty TGA 2.0 comment lines that occur between non-empty lines.
 * Decode true-color images that contain an unused legacy color map.
+* Add resource limits for TGA 2.0 metadata decoding.
 
 ## [1.3.1][] - 2026-08-15
 

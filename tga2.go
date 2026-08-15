@@ -113,11 +113,23 @@ type developerDirectoryEntry struct {
 	size   uint32 // size is the field payload length in bytes.
 }
 
+// metadataBudget tracks allocations made while reading TGA 2.0 metadata.
+type metadataBudget struct {
+	limit uint64
+	used  uint64
+}
+
 // DecodeWithMetadata decodes a seekable TGA stream and reads its TGA 2.0 metadata.
 // AttributesType values 0 and 1 produce opaque pixels, 2 and 3 preserve straight
 // alpha as *image.NRGBA, and 4 returns premultiplied pixels as *image.RGBA.
 // The reader must implement io.ReadSeeker and is not closed by this function.
 func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error) {
+	return DecodeWithMetadataOptions(r, DecodeOptions{})
+}
+
+// DecodeWithMetadataOptions is DecodeWithMetadata with resource limits.
+// MaxDecodedBytes limits image pixels and MaxMetadataBytes limits TGA 2.0 data.
+func DecodeWithMetadataOptions(r io.ReadSeeker, opts DecodeOptions) (img image.Image, info Info, err error) {
 	defer func() {
 		err = wrapTruncated(err)
 	}()
@@ -140,7 +152,7 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 	}
 
 	// Decode validates and decodes pixels using the same path as Decode(io.Reader).
-	img, err = Decode(r)
+	img, err = DecodeWithOptions(r, opts)
 	if err != nil {
 		return nil, Info{}, err
 	}
@@ -170,7 +182,11 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 	extOffset := int64(binary.LittleEndian.Uint32(footer[:4]))
 	devOffset := int64(binary.LittleEndian.Uint32(footer[4:8]))
 	dataEnd := end - tga2FooterSize
+	budget := metadataBudget{limit: opts.MaxMetadataBytes}
 	if extOffset != 0 {
+		if err = budget.reserve(tga2ExtensionSize); err != nil {
+			return nil, Info{}, err
+		}
 		ext, err := readTGA2Extension(r, extOffset, dataEnd)
 		if err != nil {
 			return nil, Info{}, err
@@ -195,7 +211,7 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 			format.colorMapStart = int(binary.LittleEndian.Uint16(h[3:5]))
 		}
 
-		info.Metadata, err = parseTGA2Metadata(r, ext, extOffset, dataEnd, format)
+		info.Metadata, err = parseTGA2Metadata(r, ext, extOffset, dataEnd, format, &budget)
 		if err != nil {
 			return nil, Info{}, err
 		}
@@ -211,62 +227,96 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 	}
 
 	if devOffset != 0 {
-		info.DeveloperFields, err = readDeveloperDirectory(r, devOffset, dataEnd)
+		info.DeveloperFields, info.DeveloperArea, err = readDeveloperDirectory(r, devOffset, dataEnd, &budget)
 		if err != nil {
 			return nil, Info{}, err
-		}
-		for _, field := range info.DeveloperFields {
-			info.DeveloperArea = append(info.DeveloperArea, field.Data...)
 		}
 	}
 
 	return img, info, nil
 }
 
+// reserve accounts for a metadata allocation and enforces the configured limit.
+func (b *metadataBudget) reserve(size int64) error {
+	if size < 0 {
+		return ErrFormat
+	}
+
+	amount := uint64(size)
+	if b.limit > 0 && (b.used > b.limit || amount > b.limit-b.used) {
+		return ErrResourceLimit
+	}
+	b.used += amount
+
+	return nil
+}
+
 // readDeveloperDirectory reads the directory and all fields it references.
-func readDeveloperDirectory(r io.ReadSeeker, offset, dataEnd int64) ([]DeveloperField, error) {
+func readDeveloperDirectory(r io.ReadSeeker, offset, dataEnd int64, budget *metadataBudget) ([]DeveloperField, []byte, error) {
 	if offset < int64(headerSize) || offset > dataEnd-2 {
-		return nil, ErrFormat
+		return nil, nil, ErrFormat
 	}
 	if _, err := r.Seek(offset, io.SeekStart); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var countBytes [2]byte
 	if _, err := io.ReadFull(r, countBytes[:]); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	count := int(binary.LittleEndian.Uint16(countBytes[:]))
 	directorySize := int64(2) + int64(count)*10
 	if directorySize > dataEnd-offset {
-		return nil, ErrFormat
+		return nil, nil, ErrFormat
+	}
+	if err := budget.reserve(directorySize); err != nil {
+		return nil, nil, err
 	}
 
 	directory := make([]byte, directorySize-2)
 	if _, err := io.ReadFull(r, directory); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	var fieldBytes int64
 	fields := make([]DeveloperField, 0, count)
 	for i := range count {
 		entry := directory[i*10 : (i+1)*10]
 		fieldOffset := int64(binary.LittleEndian.Uint32(entry[2:6]))
 		fieldSize := int64(binary.LittleEndian.Uint32(entry[6:10]))
 		if fieldOffset < int64(headerSize) || fieldOffset > dataEnd || fieldSize > dataEnd-fieldOffset {
-			return nil, ErrFormat
+			return nil, nil, ErrFormat
 		}
+
+		fieldBytes += fieldSize
+	}
+	if err := budget.reserve(fieldBytes * 2); err != nil {
+		return nil, nil, err
+	}
+
+	areaSize, err := checkedInt64ToInt(fieldBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	area := make([]byte, 0, areaSize)
+	for i := range count {
+		entry := directory[i*10 : (i+1)*10]
+		fieldOffset := int64(binary.LittleEndian.Uint32(entry[2:6]))
+		fieldSize := int64(binary.LittleEndian.Uint32(entry[6:10]))
 
 		size, err := checkedInt64ToInt(fieldSize)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		data := make([]byte, size)
 		if _, err := r.Seek(fieldOffset, io.SeekStart); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if _, err := io.ReadFull(r, data); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		area = append(area, data...)
 
 		fields = append(fields, DeveloperField{
 			Tag:  binary.LittleEndian.Uint16(entry[:2]),
@@ -274,7 +324,7 @@ func readDeveloperDirectory(r io.ReadSeeker, offset, dataEnd int64) ([]Developer
 		})
 	}
 
-	return fields, nil
+	return fields, area, nil
 }
 
 // applyTGA2AlphaSemantics maps TGA 2.0 alpha attributes to Go image models.
@@ -392,7 +442,7 @@ func checkedInt64ToInt(value int64) (int, error) {
 }
 
 // parseTGA2Metadata converts extension fields and reads the optional thumbnail.
-func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64, format postageStampFormat) (*TGA2Metadata, error) {
+func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64, format postageStampFormat, budget *metadataBudget) (*TGA2Metadata, error) {
 	meta := &TGA2Metadata{
 		Author:                readASCIIZ(ext[tga2OffAuthor : tga2OffAuthor+41]),
 		Comments:              readCommentLines(ext[tga2OffComments : tga2OffComments+324]),
@@ -457,6 +507,13 @@ func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64, fo
 		size := int64(dimensions[0])*int64(dimensions[1])*int64(bytesPerPixel) + 2
 		if size > postageEnd-postageOffset {
 			return nil, ErrFormat
+		}
+		decodedBytes := int64(dimensions[0]) * int64(dimensions[1])
+		if len(format.palette) == 0 {
+			decodedBytes *= 4
+		}
+		if err := budget.reserve(size + decodedBytes); err != nil {
+			return nil, err
 		}
 
 		pixels := make([]byte, int(size-2))

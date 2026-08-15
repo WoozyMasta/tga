@@ -345,6 +345,32 @@ func TestDecodeWithMetadata_PreservesInternalEmptyComments(t *testing.T) {
 	}
 }
 
+func TestDecodeWithMetadataOptions_MetadataLimit(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, img, &EncodeOptions{
+		Metadata: &TGA2Metadata{
+			DeveloperFields: []DeveloperField{{Tag: 1, Data: make([]byte, 32)}},
+		},
+	}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+
+	_, _, err := DecodeWithMetadataOptions(bytes.NewReader(buf.Bytes()), DecodeOptions{
+		MaxMetadataBytes: 550,
+	})
+	if !errors.Is(err, ErrResourceLimit) {
+		t.Fatalf("metadata limit error=%v, want=%v", err, ErrResourceLimit)
+	}
+
+	_, _, err = DecodeWithMetadataOptions(bytes.NewReader(buf.Bytes()), DecodeOptions{
+		MaxMetadataBytes: 600,
+	})
+	if err != nil {
+		t.Fatalf("DecodeWithMetadataOptions with sufficient limit: %v", err)
+	}
+}
+
 func TestDecodeWithMetadata_AllowsPostageBeforeExtension(t *testing.T) {
 	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	thumb := image.NewNRGBA(image.Rect(0, 0, 2, 1))

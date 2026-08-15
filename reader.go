@@ -38,6 +38,8 @@ type DecodeOptions struct {
 	// MaxDecodedBytes limits storage for decoded pixels:
 	// four bytes per NRGBA pixel and one byte per Gray or Paletted pixel.
 	MaxDecodedBytes uint64 `json:"max_decoded_bytes,omitempty"`
+	// MaxMetadataBytes limits TGA 2.0 extension, thumbnail, and developer data.
+	MaxMetadataBytes uint64 `json:"max_metadata_bytes,omitempty"`
 }
 
 // parsedHeader is the validated fixed-size TGA image specification.

@@ -16,6 +16,8 @@ TGA 2.0 premultiplied alpha metadata returns *image.RGBA from DecodeWithMetadata
 DecodeWithMetadata reads optional TGA 2.0 footer, extension area,
 developer area, metadata, and postage-stamp thumbnail.
 The input must implement io.ReadSeeker.
+DecodeWithMetadataOptions applies DecodeOptions resource limits,
+including MaxMetadataBytes for TGA 2.0 data.
 
 The encoder writes grayscale, true-color, and paletted images, with optional RLE compression.
 EncodeOptions controls pixel depth, color-map depth, image origin, image ID, and TGA 2.0 metadata.
