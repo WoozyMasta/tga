@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
-## Unreleased
+## [1.3.1][] - 2026-08-15
 
 ### Added
 
@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning][].
 ### Fixed
 
 * Accept valid TGA 2.0 postage stamps placed before the extension area.
+
+[1.3.1]: https://github.com/WoozyMasta/tga/compare/v1.3.0...v1.3.1
 
 ## [1.3.0][] - 2026-08-15
 
