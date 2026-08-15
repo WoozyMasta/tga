@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning][].
 ### Removed
 -->
 
+## Unreleased
+
+### Changed
+
+* Expanded module documentation with runnable examples for decoding,
+  configuration inspection, resource limits, encoding, and TGA 2.0 metadata.
+
 ## [1.3.1][] - 2026-08-15
 
 ### Added
