@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning][].
 
 * Expanded module documentation with runnable examples for decoding,
   configuration inspection, resource limits, encoding, and TGA 2.0 metadata.
+* DecodeConfig now consumes image IDs and color maps
+  and returns the actual palette for indexed images.
 
 ### Fixed
 

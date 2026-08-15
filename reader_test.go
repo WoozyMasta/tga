@@ -50,6 +50,35 @@ func TestDecodeConfig(t *testing.T) {
 	}
 }
 
+func TestDecodeConfig_ReadsImageIDAndColorMap(t *testing.T) {
+	data := append([]byte{
+		2, 1, typePaletted,
+		5, 0, 2, 0, 24,
+		0, 0, 0, 0,
+		1, 0, 1, 0,
+		8, maskOriginTop,
+	}, 'i', 'd',
+		255, 0, 0,
+		0, 0, 255,
+		6,
+	)
+
+	config, err := DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	palette, ok := config.ColorModel.(color.Palette)
+	if !ok {
+		t.Fatalf("ColorModel=%T, want color.Palette", config.ColorModel)
+	}
+	if len(palette) != 2 {
+		t.Fatalf("palette length=%d, want=2", len(palette))
+	}
+	if got := color.NRGBAModel.Convert(palette[1]).(color.NRGBA); got != (color.NRGBA{R: 255, G: 0, B: 0, A: 255}) {
+		t.Fatalf("palette[1]=%+v", got)
+	}
+}
+
 func TestDecodeWithOptions_Limits(t *testing.T) {
 	data := makeRawTGA24(2, 2, true)
 

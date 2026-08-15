@@ -66,10 +66,22 @@ func RegisterFormat() {
 	image.RegisterFormat("tga", "", Decode, DecodeConfig)
 }
 
-// DecodeConfig returns the image configuration after consuming only the header
-// and color-map data required to validate it. It does not decode image pixels.
+// DecodeConfig returns the image configuration after consuming the header,
+// image ID, and color-map data. It does not decode image pixels.
 func DecodeConfig(r io.Reader) (image.Config, error) {
 	header, err := readHeader(r)
+	if err != nil {
+		return image.Config{}, err
+	}
+
+	if header.idLen > 0 {
+		id := make([]byte, header.idLen)
+		if _, err := io.ReadFull(r, id); err != nil {
+			return image.Config{}, err
+		}
+	}
+
+	palette, err := readColorMap(r, header)
 	if err != nil {
 		return image.Config{}, err
 	}
@@ -85,7 +97,7 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 			cm = color.GrayModel
 		}
 	case typePaletted, typeRLEPaletted:
-		cm = color.Palette{}
+		cm = palette
 	}
 
 	return image.Config{
@@ -93,6 +105,52 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 		Width:      header.width,
 		Height:     header.height,
 	}, nil
+}
+
+// readColorMap reads and converts the declared color map.
+func readColorMap(r io.Reader, header parsedHeader) (color.Palette, error) {
+	if !header.hasColorMap {
+		return nil, nil
+	}
+
+	entryBytes := (int(header.colorMapDepth) + 7) / 8
+	paletteBytes, err := checkedMul(header.colorMapLen, entryBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	rawPalette := make([]byte, paletteBytes)
+	if _, err := io.ReadFull(r, rawPalette); err != nil {
+		return nil, err
+	}
+
+	palette := make(color.Palette, header.colorMapLen)
+	for i := range header.colorMapLen {
+		offset := i * entryBytes
+		switch header.colorMapDepth {
+		case 15, 16:
+			v := uint16(rawPalette[offset]) | uint16(rawPalette[offset+1])<<8
+			palette[i] = decodeRGB555(v)
+
+		case 24:
+			palette[i] = color.NRGBA{
+				R: rawPalette[offset+2],
+				G: rawPalette[offset+1],
+				B: rawPalette[offset+0],
+				A: 0xff,
+			}
+
+		case 32:
+			palette[i] = color.NRGBA{
+				R: rawPalette[offset+2],
+				G: rawPalette[offset+1],
+				B: rawPalette[offset+0],
+				A: rawPalette[offset+3],
+			}
+		}
+	}
+
+	return palette, nil
 }
 
 // Decode reads a TGA image from r.
@@ -130,48 +188,9 @@ func decode(r io.Reader, opts DecodeOptions) (img image.Image, err error) {
 		}
 	}
 
-	var palette color.Palette
-	if header.hasColorMap {
-		// image.Paletted uses zero-based indices,
-		// so TGA's ColorMapFirst is applied while decoding pixels
-		// rather than by padding the palette.
-		entryBytes := (int(header.colorMapDepth) + 7) / 8
-		paletteBytes, err := checkedMul(header.colorMapLen, entryBytes)
-		if err != nil {
-			return nil, err
-		}
-		rawPalette := make([]byte, paletteBytes)
-		if _, err := io.ReadFull(br, rawPalette); err != nil {
-			return nil, err
-		}
-
-		palette = make(color.Palette, header.colorMapLen)
-
-		// Create the color palette
-		for i := range header.colorMapLen {
-			offset := i * entryBytes
-			switch header.colorMapDepth {
-			case 24:
-				palette[i] = color.NRGBA{
-					R: rawPalette[offset+2],
-					G: rawPalette[offset+1],
-					B: rawPalette[offset+0],
-					A: 0xff,
-				}
-
-			case 32:
-				palette[i] = color.NRGBA{
-					R: rawPalette[offset+2],
-					G: rawPalette[offset+1],
-					B: rawPalette[offset+0],
-					A: rawPalette[offset+3],
-				}
-
-			case 15, 16:
-				v := uint16(rawPalette[offset]) | uint16(rawPalette[offset+1])<<8
-				palette[i] = decodeRGB555(v)
-			}
-		}
+	palette, err := readColorMap(br, header)
+	if err != nil {
+		return nil, err
 	}
 
 	// TGA stores pixels from the descriptor-selected corner; normalize all
