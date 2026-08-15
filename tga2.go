@@ -315,9 +315,12 @@ func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64) (*
 		// Otherwise, constrain the offset and decoded size to the payload
 		// before allocating the thumbnail buffer.
 		// TGA 2.0 permits the postage stamp to be stored before the extension area;
-		// only the file header and footer are excluded here.
-		if postageOffset < extOffset+int64(tga2ExtensionSize) ||
-			postageOffset > dataEnd-2 {
+		// when present, the extension area is the next known block boundary.
+		postageEnd := dataEnd
+		if extOffset > postageOffset {
+			postageEnd = extOffset
+		}
+		if postageOffset < int64(headerSize) || postageOffset > postageEnd-2 {
 			return nil, ErrFormat
 		}
 
@@ -331,7 +334,7 @@ func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64) (*
 		}
 
 		size := int64(dimensions[0])*int64(dimensions[1])*3 + 2
-		if size > dataEnd-postageOffset {
+		if size > postageEnd-postageOffset {
 			return nil, ErrFormat
 		}
 

@@ -163,6 +163,61 @@ func TestEncodeWithOptions_TGA2MetadataWritesFooterAndAreas(t *testing.T) {
 	}
 }
 
+func TestDecodeWithMetadata_AllowsPostageBeforeExtension(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	thumb := image.NewNRGBA(image.Rect(0, 0, 2, 1))
+	thumb.SetNRGBA(0, 0, color.NRGBA{R: 10, G: 20, B: 30, A: 255})
+	thumb.SetNRGBA(1, 0, color.NRGBA{R: 40, G: 50, B: 60, A: 255})
+
+	var buf bytes.Buffer
+	if err := EncodeWithOptions(&buf, src, &EncodeOptions{
+		Metadata: &TGA2Metadata{Thumbnail: thumb},
+	}); err != nil {
+		t.Fatalf("EncodeWithOptions: %v", err)
+	}
+
+	original := buf.Bytes()
+	footerStart := len(original) - tga2FooterSize
+	extOffset := int(binary.LittleEndian.Uint32(original[footerStart : footerStart+4]))
+	ext := original[extOffset : extOffset+tga2ExtensionSize]
+	postageOffset := int(binary.LittleEndian.Uint32(ext[tga2OffPostageStamp : tga2OffPostageStamp+4]))
+	if postageOffset != extOffset+tga2ExtensionSize {
+		t.Fatalf("unexpected original postage layout: ext=%d postage=%d", extOffset, postageOffset)
+	}
+
+	prefix := original[:extOffset]
+	postage := original[postageOffset:footerStart]
+	rearranged := make([]byte, 0, len(original))
+	rearranged = append(rearranged, prefix...)
+	newPostageOffset := len(rearranged)
+	rearranged = append(rearranged, postage...)
+	newExtOffset := len(rearranged)
+	rearranged = append(rearranged, ext...)
+	rearranged = append(rearranged, original[footerStart:]...)
+
+	extStart := newExtOffset
+	binary.LittleEndian.PutUint32(
+		rearranged[extStart+tga2OffPostageStamp:extStart+tga2OffPostageStamp+4],
+		uint32(newPostageOffset),
+	)
+	newFooterStart := len(rearranged) - tga2FooterSize
+	binary.LittleEndian.PutUint32(
+		rearranged[newFooterStart:newFooterStart+4],
+		uint32(newExtOffset),
+	)
+
+	decoded, info, err := DecodeWithMetadata(bytes.NewReader(rearranged))
+	if err != nil {
+		t.Fatalf("DecodeWithMetadata: %v", err)
+	}
+	if !imagesEqual(src, decoded) {
+		t.Fatalf("decoded image mismatch")
+	}
+	if info.Metadata == nil || !imagesEqual(thumb, info.Metadata.Thumbnail) {
+		t.Fatalf("thumbnail mismatch: metadata=%+v", info.Metadata)
+	}
+}
+
 func TestDecodeWithMetadata_RejectsInvalidOffsets(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	var buf bytes.Buffer

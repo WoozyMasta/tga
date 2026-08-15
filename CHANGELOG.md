@@ -18,8 +18,12 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
-* Curated external TGA fixtures with PNG oracles and smoke tests for
-  16-bit true-color/grayscale and RLE color-mapped data.
+* Curated external TGA fixtures with PNG oracles
+  and smoke tests for 16-bit true-color/grayscale and RLE color-mapped data.
+
+### Fixed
+
+* Accept valid TGA 2.0 postage stamps placed before the extension area.
 
 ## [1.3.0][] - 2026-08-15
 
