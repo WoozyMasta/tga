@@ -923,6 +923,19 @@ func writeRLEPaletteRaw(dst []byte, w, start int, src []byte, colorMapStart, col
 
 // normalizePaletteIndices validates TGA color-map indices and converts them to local palette indices.
 func normalizePaletteIndices(dst, src []byte, colorMapStart, colorMapLen int) error {
+	if colorMapStart == 0 && colorMapLen == 256 {
+		return nil
+	}
+	if colorMapStart == 0 {
+		for i, index := range src {
+			if int(index) >= colorMapLen {
+				return ErrPaletteIndex
+			}
+			dst[i] = index
+		}
+		return nil
+	}
+
 	for i, index := range src {
 		normalized, err := normalizePaletteIndex(index, colorMapStart, colorMapLen)
 		if err != nil {
@@ -966,14 +979,42 @@ func convertRowToNRGBA(dst []byte, src []byte, w int, depth int, hasAlpha bool) 
 
 // convertRow16ToNRGBA converts one 15/16-bit BGR555 row to 32-bit RGBA.
 func convertRow16ToNRGBA(dst []byte, src []byte, hasAlpha bool) {
+	if hasAlpha {
+		convertRow16ToNRGBAAlpha(dst, src)
+		return
+	}
+
+	convertRow16ToNRGBAOpaque(dst, src)
+}
+
+// convertRow16ToNRGBAOpaque converts RGB555 pixels without per-pixel alpha checks.
+func convertRow16ToNRGBAOpaque(dst []byte, src []byte) {
 	di := 0
 	for si := 0; si < len(src); si += 2 {
 		v := uint16(src[si]) | uint16(src[si+1])<<8
-		c := decode16BitTrueColor(v, hasAlpha)
-		dst[di+0] = c.R
-		dst[di+1] = c.G
-		dst[di+2] = c.B
-		dst[di+3] = c.A
+		r := byte((v >> 10) & 0x1f)
+		g := byte((v >> 5) & 0x1f)
+		b := byte(v & 0x1f)
+		dst[di+0] = (r << 3) | (r >> 2)
+		dst[di+1] = (g << 3) | (g >> 2)
+		dst[di+2] = (b << 3) | (b >> 2)
+		dst[di+3] = 0xff
+		di += 4
+	}
+}
+
+// convertRow16ToNRGBAAlpha converts A1R5G5B5 pixels with their alpha bit.
+func convertRow16ToNRGBAAlpha(dst []byte, src []byte) {
+	di := 0
+	for si := 0; si < len(src); si += 2 {
+		v := uint16(src[si]) | uint16(src[si+1])<<8
+		r := byte((v >> 10) & 0x1f)
+		g := byte((v >> 5) & 0x1f)
+		b := byte(v & 0x1f)
+		dst[di+0] = (r << 3) | (r >> 2)
+		dst[di+1] = (g << 3) | (g >> 2)
+		dst[di+2] = (b << 3) | (b >> 2)
+		dst[di+3] = byte((v >> 15) * 0xff)
 		di += 4
 	}
 }
