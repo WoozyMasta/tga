@@ -27,6 +27,14 @@ TGA 2.0 premultiplied alpha metadata returns `*image.RGBA`.
 > If you still need `image.Decode`, opt in with blank import:
 > `import _ "github.com/woozymasta/tga/register"`.
 
+## Install
+
+```sh
+go get github.com/woozymasta/tga
+```
+
+## Usage
+
 ```go
 import "github.com/woozymasta/tga"
 
