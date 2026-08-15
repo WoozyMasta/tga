@@ -143,7 +143,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			}
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: 8, grayscale: true}, settings.OriginBottom)
 
 	case *image.Paletted:
 		cMapDepth, err := resolveColorMapDepth(settings.ColorMapDepth, src.Palette)
@@ -204,7 +204,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			}
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: 8, palette: src.Palette}, settings.OriginBottom)
 
 	case *image.RGBA:
 		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
@@ -246,7 +246,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			return err
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth}, settings.OriginBottom)
 
 	case *image.NRGBA:
 		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
@@ -296,7 +296,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			}
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth}, settings.OriginBottom)
 
 	default:
 		trueColorDepth, err := resolveTrueColorDepth(settings.PixelDepth)
@@ -340,7 +340,7 @@ func EncodeWithOptions(w io.Writer, m image.Image, opts *EncodeOptions) error {
 			return err
 		}
 
-		return writeTGA2TailIfNeeded(cw, meta)
+		return writeTGA2TailIfNeeded(cw, meta, postageStampFormat{depth: trueColorDepth}, settings.OriginBottom)
 	}
 }
 
@@ -438,12 +438,12 @@ func effectiveEncodeOptions(opts *EncodeOptions) EncodeOptions {
 }
 
 // writeTGA2TailIfNeeded writes TGA 2.0 tail only when metadata is enabled.
-func writeTGA2TailIfNeeded(cw *countingWriter, meta *TGA2Metadata) error {
+func writeTGA2TailIfNeeded(cw *countingWriter, meta *TGA2Metadata, format postageStampFormat, originBottom bool) error {
 	if cw == nil || meta == nil {
 		return nil
 	}
 
-	return writeTGA2Tail(cw, meta)
+	return writeTGA2Tail(cw, meta, format, originBottom)
 }
 
 // validateMetadata validates supported metadata field ranges.

@@ -45,7 +45,7 @@ type DeveloperField struct {
 type TGA2Metadata struct {
 	// Timestamp writes local date/time fields if non-zero.
 	Timestamp time.Time `json:"timestamp,omitzero"`
-	// Thumbnail writes TGA 2.0 postage stamp block (24-bit BGR).
+	// Thumbnail writes an uncompressed TGA 2.0 postage stamp in the main image format.
 	Thumbnail image.Image `json:"thumbnail,omitempty"`
 	// Author is stored in the 41-byte Author Name field.
 	Author string `json:"author,omitempty"`
@@ -95,6 +95,15 @@ type Info struct {
 	DeveloperArea []byte `json:"developer_area,omitempty"`
 	// HasFooter reports whether the TGA 2.0 footer signature was found.
 	HasFooter bool `json:"has_footer"`
+}
+
+// postageStampFormat describes the uncompressed pixel format of a thumbnail.
+type postageStampFormat struct {
+	palette       color.Palette // palette contains the main image palette for indexed thumbnails.
+	depth         int           // depth is the main image pixel depth in bits.
+	colorMapStart int           // colorMapStart is the first file index declared by the main color map.
+	grayscale     bool          // grayscale selects luminance encoding instead of true-color encoding.
+	alpha         bool          // alpha reports whether 16-bit true-color pixels contain an alpha bit.
 }
 
 // developerDirectoryEntry stores one serialized TGA 2.0 directory record.
@@ -166,7 +175,27 @@ func DecodeWithMetadata(r io.ReadSeeker) (img image.Image, info Info, err error)
 		if err != nil {
 			return nil, Info{}, err
 		}
-		info.Metadata, err = parseTGA2Metadata(r, ext, extOffset, dataEnd)
+
+		format := postageStampFormat{
+			depth: int(h[16]),
+			alpha: h[16] == 16 && h[17]&0x0f == 1,
+		}
+		switch h[2] {
+		case typeGrayscale, typeRLEGrayscale:
+			format.grayscale = true
+
+		case typePaletted, typeRLEPaletted:
+			paletted, ok := img.(*image.Paletted)
+			if !ok {
+				return nil, Info{}, ErrFormat
+			}
+
+			format.depth = 8
+			format.palette = paletted.Palette
+			format.colorMapStart = int(binary.LittleEndian.Uint16(h[3:5]))
+		}
+
+		info.Metadata, err = parseTGA2Metadata(r, ext, extOffset, dataEnd, format)
 		if err != nil {
 			return nil, Info{}, err
 		}
@@ -341,7 +370,7 @@ func checkedInt64ToInt(value int64) (int, error) {
 }
 
 // parseTGA2Metadata converts extension fields and reads the optional thumbnail.
-func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64) (*TGA2Metadata, error) {
+func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64, format postageStampFormat) (*TGA2Metadata, error) {
 	meta := &TGA2Metadata{
 		Author:                readASCIIZ(ext[tga2OffAuthor : tga2OffAuthor+41]),
 		Comments:              readCommentLines(ext[tga2OffComments : tga2OffComments+324]),
@@ -399,26 +428,26 @@ func parseTGA2Metadata(r io.ReadSeeker, ext []byte, extOffset, dataEnd int64) (*
 			return nil, err
 		}
 
-		size := int64(dimensions[0])*int64(dimensions[1])*3 + 2
+		bytesPerPixel, err := postageBytesPerPixel(format)
+		if err != nil {
+			return nil, err
+		}
+		size := int64(dimensions[0])*int64(dimensions[1])*int64(bytesPerPixel) + 2
 		if size > postageEnd-postageOffset {
 			return nil, ErrFormat
 		}
 
-		pixels := make([]byte, size-2)
+		pixels := make([]byte, int(size-2))
 		if _, err := io.ReadFull(r, pixels); err != nil {
 			return nil, err
 		}
 
 		width := int(dimensions[0])
 		height := int(dimensions[1])
-		thumb := image.NewNRGBA(image.Rect(0, 0, width, height))
-		for i, y := 0, 0; y < thumb.Bounds().Dy(); y++ {
-			for x := 0; x < thumb.Bounds().Dx(); x++ {
-				thumb.SetNRGBA(x, y, color.NRGBA{R: pixels[i+2], G: pixels[i+1], B: pixels[i], A: 255})
-				i += 3
-			}
+		thumb, err := decodePostageStamp(pixels, width, height, format)
+		if err != nil {
+			return nil, err
 		}
-
 		meta.Thumbnail = thumb
 	}
 
@@ -497,7 +526,7 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 }
 
 // writeTGA2Tail writes optional extension/developer areas and required footer.
-func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata) error {
+func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata, format postageStampFormat, originBottom bool) error {
 	if meta == nil {
 		return nil
 	}
@@ -507,7 +536,7 @@ func writeTGA2Tail(w *countingWriter, meta *TGA2Metadata) error {
 		return err
 	}
 
-	postageStamp, err := buildPostageStamp(meta.Thumbnail)
+	postageStamp, err := buildPostageStamp(meta.Thumbnail, format, originBottom)
 	if err != nil {
 		return err
 	}
@@ -724,8 +753,82 @@ func writeJobDuration(dst []byte, d time.Duration) {
 	}
 }
 
-// buildPostageStamp builds TGA 2.0 postage stamp block from image.
-func buildPostageStamp(img image.Image) ([]byte, error) {
+// postageBytesPerPixel returns the uncompressed postage pixel size.
+func postageBytesPerPixel(format postageStampFormat) (int, error) {
+	if len(format.palette) > 0 || format.grayscale {
+		if format.grayscale && format.depth != 8 && format.depth != 16 {
+			return 0, ErrUnsupported
+		}
+		if len(format.palette) > 0 && format.depth != 8 {
+			return 0, ErrUnsupported
+		}
+		return (format.depth + 7) / 8, nil
+	}
+
+	if format.depth != 15 && format.depth != 16 && format.depth != 24 && format.depth != 32 {
+		return 0, ErrUnsupported
+	}
+
+	return format.depth / 8, nil
+}
+
+// decodePostageStamp decodes uncompressed thumbnail pixels in the main format.
+func decodePostageStamp(pixels []byte, width, height int, format postageStampFormat) (image.Image, error) {
+	if len(format.palette) > 0 {
+		thumb := image.NewPaletted(image.Rect(0, 0, width, height), format.palette)
+		for i, value := range pixels {
+			index := int(value) - format.colorMapStart
+			if index < 0 || index >= len(format.palette) {
+				return nil, ErrFormat
+			}
+
+			indexByte, err := byteFromInt(index)
+			if err != nil {
+				return nil, err
+			}
+
+			thumb.Pix[i] = indexByte
+		}
+
+		return thumb, nil
+	}
+
+	thumb := image.NewNRGBA(image.Rect(0, 0, width, height))
+	bytesPerPixel, err := postageBytesPerPixel(format)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, offset := 0, 0; i < width*height; i++ {
+		var pixel color.NRGBA
+		switch {
+		case format.grayscale && format.depth == 8:
+			pixel = color.NRGBA{R: pixels[offset], G: pixels[offset], B: pixels[offset], A: 0xff}
+
+		case format.grayscale && format.depth == 16:
+			pixel = color.NRGBA{R: pixels[offset], G: pixels[offset], B: pixels[offset], A: pixels[offset+1]}
+
+		case format.depth == 15 || format.depth == 16:
+			pixel = decode16BitTrueColor(binary.LittleEndian.Uint16(pixels[offset:offset+2]), format.alpha)
+
+		case format.depth == 24:
+			pixel = color.NRGBA{R: pixels[offset+2], G: pixels[offset+1], B: pixels[offset], A: 0xff}
+
+		case format.depth == 32:
+			pixel = color.NRGBA{R: pixels[offset+2], G: pixels[offset+1], B: pixels[offset], A: pixels[offset+3]}
+
+		default:
+			return nil, ErrUnsupported
+		}
+		thumb.SetNRGBA(i%width, i/width, pixel)
+		offset += bytesPerPixel
+	}
+
+	return thumb, nil
+}
+
+// buildPostageStamp builds an uncompressed TGA 2.0 thumbnail in the main format.
+func buildPostageStamp(img image.Image, format postageStampFormat, originBottom bool) ([]byte, error) {
 	if img == nil {
 		return nil, nil
 	}
@@ -749,18 +852,45 @@ func buildPostageStamp(img image.Image) ([]byte, error) {
 		return nil, err
 	}
 
-	out := make([]byte, 2+w*h*3)
+	bytesPerPixel, err := postageBytesPerPixel(format)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 2+w*h*bytesPerPixel)
 	out[0] = wb
 	out[1] = hb
 
-	di := 2
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			nc := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
-			out[di+0] = nc.B
-			out[di+1] = nc.G
-			out[di+2] = nc.R
-			di += 3
+	for row := range h {
+		y := b.Min.Y + row
+		if originBottom {
+			y = b.Max.Y - 1 - row
+		}
+
+		dst := out[2+row*w*bytesPerPixel:]
+		switch {
+		case len(format.palette) > 0:
+			for x := range w {
+				index, err := byteFromInt(format.palette.Index(img.At(b.Min.X+x, y)))
+				if err != nil {
+					return nil, err
+				}
+				dst[x] = index
+			}
+
+		case format.grayscale:
+			for x := range w {
+				gray := color.GrayModel.Convert(img.At(b.Min.X+x, y)).(color.Gray)
+				dst[x*bytesPerPixel] = gray.Y
+				if bytesPerPixel == 2 {
+					nrgba := color.NRGBAModel.Convert(img.At(b.Min.X+x, y)).(color.NRGBA)
+					dst[x*2+1] = nrgba.A
+				}
+			}
+
+		default:
+			rowPixels := make([]byte, w*4)
+			fillNRGBARow(rowPixels, img, b.Min.X, y)
+			packNRGBARow(dst[:w*bytesPerPixel], rowPixels, format.depth)
 		}
 	}
 

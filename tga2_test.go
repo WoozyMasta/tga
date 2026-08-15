@@ -182,6 +182,82 @@ func TestEncodeWithOptions_TGA2DeveloperDirectory(t *testing.T) {
 	}
 }
 
+func TestEncodeWithOptions_TGA2ThumbnailUsesImageFormat(t *testing.T) {
+	palette := color.Palette{
+		color.NRGBA{R: 10, G: 20, B: 30, A: 255},
+		color.NRGBA{R: 40, G: 50, B: 60, A: 255},
+	}
+	red := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	red.SetNRGBA(0, 0, color.NRGBA{R: 255, G: 0, B: 0, A: 255})
+
+	tests := []struct {
+		name string
+		img  image.Image
+		meta image.Image
+		opts EncodeOptions
+		want []byte
+	}{
+		{
+			name: "gray8",
+			img:  image.NewGray(image.Rect(0, 0, 1, 1)),
+			meta: image.NewGray(image.Rect(0, 0, 1, 1)),
+			want: []byte{0x00},
+		},
+		{
+			name: "paletted8",
+			img:  image.NewPaletted(image.Rect(0, 0, 1, 1), palette),
+			meta: red,
+			want: []byte{0x01},
+		},
+		{
+			name: "truecolor16",
+			img:  red,
+			meta: red,
+			opts: EncodeOptions{PixelDepth: 16},
+			want: []byte{0x00, 0xfc},
+		},
+		{
+			name: "truecolor24",
+			img:  red,
+			meta: red,
+			opts: EncodeOptions{PixelDepth: 24},
+			want: []byte{0x00, 0x00, 0xff},
+		},
+		{
+			name: "truecolor32",
+			img:  red,
+			meta: red,
+			want: []byte{0x00, 0x00, 0xff, 0xff},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			thumb := test.meta
+			if test.name == "gray8" {
+				thumb.(*image.Gray).SetGray(0, 0, color.Gray{Y: 0x34})
+				test.want[0] = 0x34
+			}
+			test.opts.Metadata = &TGA2Metadata{Thumbnail: thumb}
+
+			var buf bytes.Buffer
+			if err := EncodeWithOptions(&buf, test.img, &test.opts); err != nil {
+				t.Fatalf("EncodeWithOptions: %v", err)
+			}
+			data := buf.Bytes()
+			footer := len(data) - tga2FooterSize
+			extOffset := int(binary.LittleEndian.Uint32(data[footer : footer+4]))
+			postageOffset := int(binary.LittleEndian.Uint32(
+				data[extOffset+tga2OffPostageStamp : extOffset+tga2OffPostageStamp+4],
+			))
+			got := data[postageOffset+2 : postageOffset+2+len(test.want)]
+			if !bytes.Equal(got, test.want) {
+				t.Fatalf("thumbnail bytes=%x, want=%x", got, test.want)
+			}
+		})
+	}
+}
+
 func TestDecodeWithMetadata_RejectsInvalidDeveloperDirectory(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	var buf bytes.Buffer
@@ -441,7 +517,7 @@ func TestWriteTGA2Tail_RejectsOffsetOverflowBeforeWriting(t *testing.T) {
 		w: &buf,
 		n: int64(math.MaxUint32) - int64(tga2ExtensionSize) + 1,
 	}
-	err := writeTGA2Tail(cw, &TGA2Metadata{})
+	err := writeTGA2Tail(cw, &TGA2Metadata{}, postageStampFormat{depth: 32}, false)
 	if !errors.Is(err, ErrFormat) {
 		t.Fatalf("error=%v, want ErrFormat", err)
 	}
